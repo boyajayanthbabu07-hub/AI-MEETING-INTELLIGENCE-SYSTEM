@@ -1,0 +1,43 @@
+# Virtual Environments
+venv/
+venv_old/
+env/
+ENV/
+
+# Python Cache & Bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+
+# Environment Variables & Secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.crt
+*.key
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+frontend/npm-debug.log*
+frontend/yarn-debug.log*
+frontend/yarn-error.log*
+
+# Uploads & FAISS vector data (keep directories tracked with .gitkeep)
+backend/uploads/*
+!backend/uploads/.gitkeep
+faiss_data/*
+!faiss_data/.gitkeep
+
+# IDEs & Operating Systems
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+*.log
