@@ -1,54 +1,75 @@
-import {
-  BrowserRouter,
-  Routes,
-  Route,
-  Navigate
-} from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { ToastProvider } from "./context/ToastContext";
+import { AuthProvider } from "./context/AuthContext";
+import ProtectedRoute from "./components/ProtectedRoute";
 
 import Login from "./pages/Login";
 import Register from "./pages/Register";
+import VerifyEmail from "./pages/VerifyEmail";
+import ForgotPassword from "./pages/ForgotPassword";
+import ResetPassword from "./pages/ResetPassword";
 import Dashboard from "./pages/Dashboard";
+import Profile from "./pages/Profile";
+import Settings from "./pages/Settings";
 import MeetingRoom from "./pages/MeetingRoom";
 import SocketTest from "./SocketTest";
 
-function App() {
+export default function App() {
   return (
-    <BrowserRouter>
-      <Routes>
+    <ToastProvider>
+      <AuthProvider>
+        <BrowserRouter>
+          <Routes>
+            {/* Public Auth Routes */}
+            <Route path="/login" element={<Login />} />
+            <Route path="/register" element={<Register />} />
+            <Route path="/verify-email" element={<VerifyEmail />} />
+            <Route path="/forgot-password" element={<ForgotPassword />} />
+            <Route path="/reset-password" element={<ResetPassword />} />
 
-        <Route
-          path="/"
-          element={<Navigate to="/login" replace />}
-        />
+            {/* Protected Application Routes */}
+            <Route
+              path="/dashboard"
+              element={
+                <ProtectedRoute>
+                  <Dashboard />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/profile"
+              element={
+                <ProtectedRoute>
+                  <Profile />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/settings"
+              element={
+                <ProtectedRoute>
+                  <Settings />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/meeting/:roomCode"
+              element={
+                <ProtectedRoute>
+                  <MeetingRoom />
+                </ProtectedRoute>
+              }
+            />
 
-        <Route
-          path="/login"
-          element={<Login />}
-        />
+            {/* Diagnostics */}
+            <Route path="/socket-test" element={<SocketTest />} />
 
-        <Route
-          path="/register"
-          element={<Register />}
-        />
-
-        <Route
-          path="/dashboard"
-          element={<Dashboard />}
-        />
-
-        <Route
-          path="/meeting/:roomCode"
-          element={<MeetingRoom />}
-        />
-
-        <Route
-          path="/socket-test"
-          element={<SocketTest />}
-        />
-
-      </Routes>
-    </BrowserRouter>
+            {/* Root & Fallback */}
+            <Route path="/" element={<Navigate to="/dashboard" replace />} />
+            <Route path="*" element={<Navigate to="/dashboard" replace />} />
+          </Routes>
+        </BrowserRouter>
+      </AuthProvider>
+    </ToastProvider>
   );
 }
-
-export default App;
