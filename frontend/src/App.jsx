@@ -12,6 +12,7 @@ import Dashboard from "./pages/Dashboard";
 import Profile from "./pages/Profile";
 import Settings from "./pages/Settings";
 import MeetingRoom from "./pages/MeetingRoom";
+import MeetingEnded from "./pages/MeetingEnded";
 import SocketTest from "./SocketTest";
 
 export default function App() {
@@ -57,6 +58,14 @@ export default function App() {
               element={
                 <ProtectedRoute>
                   <MeetingRoom />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/meeting-ended/:roomCode"
+              element={
+                <ProtectedRoute>
+                  <MeetingEnded />
                 </ProtectedRoute>
               }
             />

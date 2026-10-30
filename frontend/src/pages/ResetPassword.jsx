@@ -87,6 +87,29 @@ export default function ResetPassword() {
           </p>
         </div>
 
+        {location.state?.mock_mode && (
+          <div
+            style={{
+              background: "rgba(245, 158, 11, 0.12)",
+              border: "1px solid rgba(245, 158, 11, 0.3)",
+              borderRadius: "var(--radius-md)",
+              padding: "12px 14px",
+              marginBottom: "18px",
+              fontSize: "12px",
+              color: "#fde68a",
+              lineHeight: "1.5",
+            }}
+          >
+            <strong>Note:</strong> Real SMTP is not configured in .env yet.
+            {location.state?.dev_otp ? (
+              <span> Your development reset code is: <strong style={{ letterSpacing: "2px", color: "#ffffff", background: "#0f172a", padding: "2px 6px", borderRadius: "4px" }}>{location.state.dev_otp}</strong>.</span>
+            ) : (
+              <span> Check your server terminal console for the reset code.</span>
+            )}
+            {" "}To receive real emails in your inbox, configure your Gmail App Password in Settings.
+          </div>
+        )}
+
         {error && (
           <div style={{ background: "rgba(244, 63, 94, 0.15)", border: "1px solid rgba(244, 63, 94, 0.3)", borderRadius: "var(--radius-md)", padding: "10px 14px", color: "var(--accent-rose)", fontSize: "13px", marginBottom: "18px" }}>
             {error}

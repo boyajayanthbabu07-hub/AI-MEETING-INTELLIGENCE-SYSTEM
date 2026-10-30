@@ -63,6 +63,9 @@ class Meeting(Base):
     room_code: Mapped[str] = mapped_column(String(100), unique=True, nullable=False, index=True)
     status: Mapped[str] = mapped_column(String(50), default="waiting", nullable=False)
     duration: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)  # Duration in seconds
+    passcode: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    meeting_type: Mapped[str] = mapped_column(String(50), default="internal", nullable=False)
+    external_link: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     started_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     ended_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)

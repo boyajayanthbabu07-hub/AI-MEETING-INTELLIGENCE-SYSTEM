@@ -27,7 +27,13 @@ export default function ForgotPassword() {
     try {
       const data = await forgotPassword(email.trim());
       toast.success(data.message || "Password reset code sent!");
-      navigate("/reset-password", { state: { email: email.trim() } });
+      navigate("/reset-password", {
+        state: {
+          email: email.trim(),
+          mock_mode: data.mock_mode,
+          dev_otp: data.dev_otp,
+        }
+      });
     } catch (err) {
       const errMsg = err.response?.data?.message || "Failed to send reset code. Please try again.";
       setError(errMsg);

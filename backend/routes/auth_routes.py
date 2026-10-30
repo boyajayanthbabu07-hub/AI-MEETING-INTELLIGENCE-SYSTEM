@@ -17,10 +17,16 @@ from backend.models.models import (
 )
 from backend.services.email_service import (
     generate_otp,
+    get_smtp_status,
     hash_otp,
+    is_smtp_configured,
     send_password_changed_notification,
     send_password_reset_email,
+    send_password_reset_email_detailed,
     send_verification_email,
+    send_verification_email_detailed,
+    test_smtp_connection,
+    update_smtp_env,
     verify_otp_hash,
 )
 
@@ -118,13 +124,24 @@ def register():
         db.add(otp_record)
         db.commit()
 
-        # Dispatch verification email (asynchronous or SMTP)
-        send_verification_email(email, name, otp_code)
+        # Dispatch verification email (real SMTP or dev fallback)
+        email_res = send_verification_email_detailed(email, name, otp_code)
+
+        is_mock_fallback = email_res.get("mock", False) or not email_res.get("success", False)
+
+        msg = "Registration successful. Please verify your email with the 6-digit OTP sent to your inbox."
+        if email_res.get("mock"):
+            msg = "Registration successful. NOTE: SMTP credentials are not configured in .env, so the code was printed in backend terminal."
+        elif not email_res.get("success"):
+            msg = f"Registration completed. Email delivery issue ({email_res.get('message')}). Use development code to verify."
 
         return {
-            "message": "Registration successful. Please verify your email with the 6-digit OTP sent to your inbox.",
+            "message": msg,
             "email": user.email,
             "require_verification": True,
+            "email_sent": email_res.get("success", False),
+            "mock_mode": is_mock_fallback,
+            "dev_otp": otp_code if is_mock_fallback else None,
         }, 201
 
     except Exception as e:
@@ -300,10 +317,21 @@ def resend_verification():
         db.add(otp_record)
         db.commit()
 
-        send_verification_email(email, user.name, otp_code)
+        email_res = send_verification_email_detailed(email, user.name, otp_code)
+
+        is_mock_fallback = email_res.get("mock", False) or not email_res.get("success", False)
+
+        msg = "A fresh verification code has been sent to your email."
+        if email_res.get("mock"):
+            msg = "Fresh code generated. NOTE: SMTP is not configured in .env, so the code was logged in backend terminal."
+        elif not email_res.get("success"):
+            msg = f"Code generated. Email delivery issue ({email_res.get('message')}). Use development code to verify."
 
         return {
-            "message": "A fresh verification code has been sent to your email."
+            "message": msg,
+            "email_sent": email_res.get("success", False),
+            "mock_mode": is_mock_fallback,
+            "dev_otp": otp_code if is_mock_fallback else None,
         }, 200
 
     except Exception as e:
@@ -345,6 +373,12 @@ def login():
 
         # Check if user is verified
         if not user.is_verified:
+            # Invalidate any prior active OTPs for this email
+            db.query(EmailVerificationOTP).filter(
+                EmailVerificationOTP.email == email,
+                EmailVerificationOTP.is_used == False,
+            ).update({"is_used": True})
+
             # Generate fresh verification OTP
             otp_code = generate_otp(6)
             otp_record = EmailVerificationOTP(
@@ -358,12 +392,16 @@ def login():
             db.add(otp_record)
             db.commit()
 
-            send_verification_email(email, user.name, otp_code)
+            email_res = send_verification_email_detailed(email, user.name, otp_code)
+            is_mock_fallback = email_res.get("mock", False) or not email_res.get("success", False)
 
             return {
                 "message": "Your email address is not verified yet. A verification code has been sent to your email.",
                 "require_verification": True,
                 "email": user.email,
+                "email_sent": email_res.get("success", False),
+                "mock_mode": is_mock_fallback,
+                "dev_otp": otp_code if is_mock_fallback else None,
             }, 403
 
         access_token = create_access_token(identity=str(user.id))
@@ -488,11 +526,21 @@ def forgot_password():
         db.add(reset_otp)
         db.commit()
 
-        send_password_reset_email(email, user.name, otp_code)
+        email_res = send_password_reset_email_detailed(email, user.name, otp_code)
+        is_mock_fallback = email_res.get("mock", False) or not email_res.get("success", False)
+
+        msg = "If an account exists with this email, a password reset code has been sent."
+        if email_res.get("mock"):
+            msg = "Password reset code generated. NOTE: SMTP credentials are not configured in .env, so code was logged in backend terminal."
+        elif not email_res.get("success"):
+            msg = f"Reset code generated. Delivery issue ({email_res.get('message')}). Use development code."
 
         return {
-            "message": "If an account exists with this email, a password reset code has been sent.",
+            "message": msg,
             "email": email,
+            "email_sent": email_res.get("success", False),
+            "mock_mode": is_mock_fallback,
+            "dev_otp": otp_code if is_mock_fallback else None,
         }, 200
 
     except Exception as e:
@@ -782,3 +830,76 @@ def update_profile():
 
     finally:
         db.close()
+
+
+# ======================================================================
+# 12. SMTP CONFIGURATION & DIAGNOSTICS
+# ======================================================================
+
+@auth_bp.route("/smtp-status", methods=["GET"])
+def smtp_status():
+    """Get current status of email delivery service."""
+    return get_smtp_status(), 200
+
+
+@auth_bp.route("/test-smtp", methods=["POST"])
+def test_smtp():
+    """Test SMTP connection by sending a diagnostic test email."""
+    data = request.get_json() or {}
+    test_recipient = (data.get("test_email") or "").strip().lower()
+
+    if not test_recipient:
+        return {
+            "success": False,
+            "message": "Recipient email address is required to run the test."
+        }, 400
+
+    if not is_valid_email(test_recipient):
+        return {
+            "success": False,
+            "message": "Please provide a valid recipient email address."
+        }, 400
+
+    result = test_smtp_connection(test_recipient)
+    status_code = 200 if result.get("success") else 400
+    return result, status_code
+
+
+@auth_bp.route("/update-smtp", methods=["POST"])
+@jwt_required()
+def update_smtp():
+    """Update SMTP settings in environment and runtime."""
+    data = request.get_json() or {}
+    username = (data.get("mail_username") or "").strip()
+    password = (data.get("mail_password") or "").strip()
+    server = (data.get("mail_server") or "smtp.gmail.com").strip()
+    port = int(data.get("mail_port") or 587)
+    use_tls = bool(data.get("mail_use_tls", True))
+    default_sender = (data.get("mail_default_sender") or "").strip()
+
+    if not username:
+        return {
+            "message": "Email address (MAIL_USERNAME) is required"
+        }, 400
+
+    if not password:
+        return {
+            "message": "Password (MAIL_PASSWORD / Google App Password) is required"
+        }, 400
+
+    success, msg = update_smtp_env(
+        username=username,
+        password=password,
+        server=server,
+        port=port,
+        use_tls=use_tls,
+        default_sender=default_sender or None
+    )
+
+    if not success:
+        return {"message": msg}, 500
+
+    return {
+        "message": "SMTP credentials saved and activated successfully!",
+        "smtp_status": get_smtp_status()
+    }, 200

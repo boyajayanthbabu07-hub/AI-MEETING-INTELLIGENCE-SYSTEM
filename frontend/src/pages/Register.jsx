@@ -49,7 +49,14 @@ export default function Register() {
       const data = await register(name.trim(), email.trim(), password);
       toast.success(data.message || "Account created! Please check your email for the 6-digit OTP.");
       // Navigate to email verification screen
-      navigate("/verify-email", { state: { email: email.trim(), name: name.trim() } });
+      navigate("/verify-email", {
+        state: {
+          email: email.trim(),
+          name: name.trim(),
+          mock_mode: data.mock_mode,
+          dev_otp: data.dev_otp,
+        }
+      });
     } catch (err) {
       const errMsg = err.response?.data?.message || "Registration failed. Please check your details.";
       setError(errMsg);
