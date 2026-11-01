@@ -17,10 +17,15 @@ DATABASE_URL = (
     f"@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 )
 
+connect_args = {}
+if os.getenv('DB_SSL', '').lower() in ('true', '1') or 'aivencloud' in (DB_HOST or '') or 'tidbcloud' in (DB_HOST or ''):
+    connect_args['ssl'] = {}
+
 engine = create_engine(
     DATABASE_URL,
     echo=False,
-    pool_pre_ping=True
+    pool_pre_ping=True,
+    connect_args=connect_args
 )
 
 SessionLocal = sessionmaker(
