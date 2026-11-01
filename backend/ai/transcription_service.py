@@ -6,12 +6,25 @@ import shutil
 import threading
 import re
 
-import whisper
-
-print("Loading Whisper model (base.en)...")
-_model = whisper.load_model(os.getenv("WHISPER_MODEL", "base.en"))
+_model = None
 _model_lock = threading.Lock()
-print("Whisper model loaded successfully.")
+
+def get_whisper_model():
+    """Lazily load Whisper model with tiny.en or base.en to conserve RAM on cloud free tiers."""
+    global _model
+    if _model is None:
+        with _model_lock:
+            if _model is None:
+                try:
+                    import whisper
+                    model_name = os.getenv("WHISPER_MODEL", "tiny.en")
+                    print(f"Loading Whisper model ({model_name})...")
+                    _model = whisper.load_model(model_name)
+                    print(f"Whisper model ({model_name}) loaded successfully.")
+                except Exception as e:
+                    print(f"[TRANSCRIPTION] Error loading Whisper model: {e}")
+                    return None
+    return _model
 
 # Whisper decoding parameters specifically tuned to prevent hallucination:
 # 1. language='en': Locks language to English, stopping Chinese/Spanish/Indonesian hallucination.
@@ -155,6 +168,10 @@ def transcribe_audio(audio_bytes: bytes, initial_prompt: str = "", known_names: 
         if initial_prompt:
             opts["initial_prompt"] = initial_prompt
 
+        model = get_whisper_model()
+        if model is None:
+            return ""
+
         # If audio is already valid RIFF WAV, feed it directly to Whisper!
         if len(audio_bytes) > 44 and audio_bytes[:4] == b"RIFF" and audio_bytes[8:12] == b"WAVE":
             with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
@@ -162,7 +179,7 @@ def transcribe_audio(audio_bytes: bytes, initial_prompt: str = "", known_names: 
                 wav_path = f.name
             try:
                 with _model_lock:
-                    transcription = _model.transcribe(wav_path, **opts)
+                    transcription = model.transcribe(wav_path, **opts)
                 return _filter_and_extract_speech(transcription, known_names=known_names)
             finally:
                 if os.path.exists(wav_path):
@@ -225,7 +242,7 @@ def transcribe_audio(audio_bytes: bytes, initial_prompt: str = "", known_names: 
             return ""
 
         with _model_lock:
-            transcription = _model.transcribe(output_path, **opts)
+            transcription = model.transcribe(output_path, **opts)
 
         return _filter_and_extract_speech(transcription, known_names=known_names)
 
