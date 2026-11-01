@@ -91,10 +91,36 @@ class Participant(Base):
     display_name: Mapped[str] = mapped_column(String(150), nullable=False)
     joined_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     left_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    is_muted: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
     # Relationships
     meeting: Mapped["Meeting"] = relationship("Meeting", back_populates="participants")
     user: Mapped[Optional["User"]] = relationship("User", back_populates="participants")
+
+
+class MeetingRemoval(Base):
+    __tablename__ = "meeting_removals"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    meeting_id: Mapped[int] = mapped_column(ForeignKey("meetings.id"), nullable=False, index=True)
+    user_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
+    display_name: Mapped[str] = mapped_column(String(150), nullable=False)
+    removed_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+    meeting: Mapped["Meeting"] = relationship("Meeting")
+    user: Mapped[Optional["User"]] = relationship("User")
+
+
+class UserDeletedMeeting(Base):
+    __tablename__ = "user_deleted_meetings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    meeting_id: Mapped[int] = mapped_column(ForeignKey("meetings.id"), nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+    meeting: Mapped["Meeting"] = relationship("Meeting")
+    user: Mapped["User"] = relationship("User")
 
 
 class MeetingMessage(Base):

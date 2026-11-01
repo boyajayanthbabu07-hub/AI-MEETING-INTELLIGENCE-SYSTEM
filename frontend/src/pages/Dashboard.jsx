@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Video,
@@ -7,16 +7,14 @@ import {
   Copy,
   Check,
   Sparkles,
-  Users,
   Calendar,
+  Users,
   ArrowRight,
   Shield,
   Key,
   Mail,
   RefreshCw,
-  ExternalLink,
   Lock,
-  Search,
 } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { useToast } from "../context/ToastContext";
@@ -25,7 +23,6 @@ import Navbar from "../components/Navbar";
 import Sidebar from "../components/Sidebar";
 import LoadingSpinner from "../components/LoadingSpinner";
 import InviteModal from "../components/InviteModal";
-import MeetingIntelligenceModal from "../components/MeetingIntelligenceModal";
 
 export default function Dashboard() {
   const navigate = useNavigate();
@@ -34,21 +31,12 @@ export default function Dashboard() {
 
   // Create Meeting State
   const [title, setTitle] = useState("");
-  const [meetingType, setMeetingType] = useState("internal"); // "internal" | "google_meet"
+  const meetingType = "internal";
   const [externalLink, setExternalLink] = useState("");
   const [requirePasscode, setRequirePasscode] = useState(false);
   const [passcode, setPasscode] = useState("");
   const [creating, setCreating] = useState(false);
   const [createdMeeting, setCreatedMeeting] = useState(null);
-
-  // Search across meetings & transcripts
-  const [searchQuery, setSearchQuery] = useState("");
-  const [searchResults, setSearchResults] = useState(null);
-  const [searching, setSearching] = useState(false);
-
-  // Meeting Intelligence Modal State
-  const [intelModalOpen, setIntelModalOpen] = useState(false);
-  const [selectedMeetingForIntel, setSelectedMeetingForIntel] = useState(null);
 
   // Join Meeting State
   const [roomCode, setRoomCode] = useState("");
@@ -56,10 +44,6 @@ export default function Dashboard() {
   const [needsPasscode, setNeedsPasscode] = useState(false);
   const [displayName, setDisplayName] = useState(user?.name || "");
   const [joining, setJoining] = useState(false);
-
-  // My Meetings List
-  const [myMeetings, setMyMeetings] = useState([]);
-  const [loadingMeetings, setLoadingMeetings] = useState(false);
 
   // Invite Modal State
   const [inviteModalOpen, setInviteModalOpen] = useState(false);
@@ -74,22 +58,6 @@ export default function Dashboard() {
     const code = Math.floor(100000 + Math.random() * 900000).toString();
     setPasscode(code);
     return code;
-  };
-
-  useEffect(() => {
-    fetchMyMeetings();
-  }, []);
-
-  const fetchMyMeetings = async () => {
-    setLoadingMeetings(true);
-    try {
-      const res = await api.get("/api/meetings/my-meetings");
-      setMyMeetings(res.data?.meetings || []);
-    } catch (err) {
-      console.error("Failed to load user meetings:", err);
-    } finally {
-      setLoadingMeetings(false);
-    }
   };
 
   const handleTogglePasscode = (checked) => {
@@ -125,9 +93,6 @@ export default function Dashboard() {
       const meeting = response.data.meeting;
       setCreatedMeeting(meeting);
       toast.success("Meeting room created successfully!");
-
-      // Refresh recent list
-      fetchMyMeetings();
 
       // Reset form fields
       setTitle("");
@@ -176,43 +141,13 @@ export default function Dashboard() {
     setInviteModalOpen(true);
   };
 
-  const openIntelModal = (meeting) => {
-    setSelectedMeetingForIntel(meeting);
-    setIntelModalOpen(true);
-  };
-
-  const handleSearch = async (e) => {
-    e.preventDefault();
-    const query = searchQuery.trim();
-    if (!query) {
-      setSearchResults(null);
-      return;
-    }
-
-    setSearching(true);
-    try {
-      const res = await api.get(`/api/meetings/search?q=${encodeURIComponent(query)}`);
-      setSearchResults(res.data?.results || []);
-    } catch (err) {
-      console.warn("Search error:", err);
-      toast.error("Failed to execute search across meetings.");
-    } finally {
-      setSearching(false);
-    }
-  };
-
-  const clearSearch = () => {
-    setSearchQuery("");
-    setSearchResults(null);
-  };
-
   return (
     <div className="dashboard-layout">
       <Sidebar />
-      <div className="main-content">
+      <div className="main-content" style={{ display: "flex", flexDirection: "column", minHeight: "100vh" }}>
         <Navbar />
 
-        <div className="page-body">
+        <div className="page-body" style={{ flex: 1 }}>
           {/* Welcome Banner */}
           <div
             style={{
@@ -266,145 +201,6 @@ export default function Dashboard() {
             </div>
           </div>
 
-          {/* Search Across Previous Meetings & Transcripts */}
-          <div
-            style={{
-              background: "var(--bg-surface)",
-              border: "1px solid var(--border-subtle)",
-              borderRadius: "var(--radius-lg)",
-              padding: "16px 20px",
-              marginBottom: "28px",
-            }}
-          >
-            <form onSubmit={handleSearch} style={{ display: "flex", gap: "12px", alignItems: "center" }}>
-              <div style={{ position: "relative", flex: 1 }}>
-                <Search
-                  size={16}
-                  style={{
-                    position: "absolute",
-                    left: "14px",
-                    top: "50%",
-                    transform: "translateY(-50%)",
-                    color: "var(--text-muted)",
-                  }}
-                />
-                <input
-                  type="text"
-                  className="input-field"
-                  style={{ paddingLeft: "40px" }}
-                  placeholder="Search previous meetings, topics, decisions, action items, or transcripts..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                />
-              </div>
-              <button type="submit" className="btn btn-secondary" disabled={searching || !searchQuery.trim()}>
-                {searching ? <LoadingSpinner size={14} text="" inline /> : <Search size={15} />}
-                <span>{searching ? "Searching..." : "Search"}</span>
-              </button>
-              {searchResults !== null && (
-                <button type="button" onClick={clearSearch} className="btn btn-secondary">
-                  Clear
-                </button>
-              )}
-            </form>
-
-            {/* Search Results Display */}
-            {searchResults !== null && (
-              <div style={{ marginTop: "16px", paddingTop: "16px", borderTop: "1px solid var(--border-subtle)" }}>
-                <div style={{ fontSize: "13px", fontWeight: "700", color: "#ffffff", marginBottom: "10px" }}>
-                  Search Results ({searchResults.length})
-                </div>
-
-                {searchResults.length === 0 ? (
-                  <p style={{ color: "var(--text-muted)", fontSize: "13px", margin: 0 }}>
-                    No meetings, decisions, or transcripts matched "{searchQuery}".
-                  </p>
-                ) : (
-                  <div style={{ display: "flex", flexDirection: "column", gap: "8px", maxHeight: "240px", overflowY: "auto" }}>
-                    {searchResults.map((item, idx) => (
-                      <div
-                        key={idx}
-                        style={{
-                          background: "var(--bg-card)",
-                          padding: "10px 14px",
-                          borderRadius: "var(--radius-md)",
-                          border: "1px solid var(--border-subtle)",
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "space-between",
-                          gap: "12px",
-                        }}
-                      >
-                        <div style={{ flex: 1 }}>
-                          <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "3px" }}>
-                            <span
-                              style={{
-                                fontSize: "10px",
-                                fontWeight: "800",
-                                textTransform: "uppercase",
-                                padding: "2px 6px",
-                                borderRadius: "4px",
-                                background:
-                                  item.type === "transcript"
-                                    ? "rgba(56, 189, 248, 0.15)"
-                                    : item.type === "decision"
-                                    ? "rgba(16, 185, 129, 0.15)"
-                                    : item.type === "action_item"
-                                    ? "rgba(245, 158, 11, 0.15)"
-                                    : "rgba(99, 102, 241, 0.15)",
-                                color:
-                                  item.type === "transcript"
-                                    ? "var(--primary)"
-                                    : item.type === "decision"
-                                    ? "var(--accent-emerald)"
-                                    : item.type === "action_item"
-                                    ? "#fbbf24"
-                                    : "var(--accent-indigo)",
-                              }}
-                            >
-                              {item.type.replace("_", " ")}
-                            </span>
-                            <span style={{ fontSize: "13px", fontWeight: "700", color: "#ffffff" }}>
-                              {item.title}
-                            </span>
-                            {item.timestamp_str && (
-                              <span style={{ fontSize: "11px", color: "var(--text-muted)", fontFamily: "monospace" }}>
-                                [{item.timestamp_str}]
-                              </span>
-                            )}
-                          </div>
-                          <p style={{ margin: 0, fontSize: "12px", color: "var(--text-secondary)", lineHeight: "1.4" }}>
-                            {item.snippet}
-                          </p>
-                        </div>
-
-                        <div style={{ display: "flex", gap: "6px" }}>
-                          <button
-                            type="button"
-                            className="btn btn-secondary"
-                            style={{ padding: "4px 8px", fontSize: "11px" }}
-                            onClick={() => openIntelModal({ room_code: item.room_code, title: item.title })}
-                          >
-                            <Sparkles size={12} />
-                            <span>Intel</span>
-                          </button>
-                          <button
-                            type="button"
-                            className="btn btn-primary"
-                            style={{ padding: "4px 10px", fontSize: "11px" }}
-                            onClick={() => navigate(`/meeting/${item.room_code}`)}
-                          >
-                            <span>Enter</span>
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-
           {/* Quick Action Grid */}
           <div
             style={{
@@ -439,53 +235,24 @@ export default function Dashboard() {
                 </div>
               </div>
 
-              {/* Host Mode Selector Tabs */}
+              {/* Platform Header */}
               <div
                 style={{
                   display: "flex",
+                  alignItems: "center",
                   background: "var(--bg-main)",
-                  padding: "4px",
+                  padding: "10px 14px",
                   borderRadius: "var(--radius-md)",
                   border: "1px solid var(--border-subtle)",
                   marginBottom: "16px",
                 }}
               >
-                <button
-                  type="button"
-                  style={{
-                    flex: 1,
-                    padding: "8px 12px",
-                    fontSize: "13px",
-                    fontWeight: "600",
-                    border: "none",
-                    borderRadius: "var(--radius-sm)",
-                    cursor: "pointer",
-                    background: meetingType === "internal" ? "var(--primary)" : "transparent",
-                    color: meetingType === "internal" ? "#ffffff" : "var(--text-secondary)",
-                    transition: "all 0.2s ease",
-                  }}
-                  onClick={() => setMeetingType("internal")}
-                >
-                  AI Video Room
-                </button>
-                <button
-                  type="button"
-                  style={{
-                    flex: 1,
-                    padding: "8px 12px",
-                    fontSize: "13px",
-                    fontWeight: "600",
-                    border: "none",
-                    borderRadius: "var(--radius-sm)",
-                    cursor: "pointer",
-                    background: meetingType === "google_meet" ? "#ea4335" : "transparent",
-                    color: meetingType === "google_meet" ? "#ffffff" : "var(--text-secondary)",
-                    transition: "all 0.2s ease",
-                  }}
-                  onClick={() => setMeetingType("google_meet")}
-                >
-                  Google Meet Host
-                </button>
+                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                  <Video size={16} color="var(--primary)" />
+                  <span style={{ fontSize: "13px", fontWeight: "700", color: "#ffffff" }}>
+                    AI Video Room
+                  </span>
+                </div>
               </div>
 
               <form onSubmit={handleCreateMeeting}>
@@ -581,14 +348,12 @@ export default function Dashboard() {
                 <button
                   type="submit"
                   className="btn btn-primary btn-block"
-                  disabled={creating || !title.trim() || (meetingType === "google_meet" && !externalLink.trim())}
+                  disabled={creating || !title.trim()}
                 >
                   {creating ? (
                     <LoadingSpinner size={16} text="Creating..." inline />
-                  ) : meetingType === "google_meet" ? (
-                    "Create Google Meet Session"
                   ) : (
-                    "Create Meeting Room"
+                    "Create AI Video Room"
                   )}
                 </button>
               </form>
@@ -780,185 +545,85 @@ export default function Dashboard() {
             </div>
           </div>
 
-          {/* My Hosted Meetings */}
-          <div className="stat-card" style={{ display: "block" }}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "18px" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-                <Calendar size={18} color="var(--primary)" />
-                <h2 style={{ fontSize: "18px", fontWeight: "700", color: "#ffffff", margin: 0 }}>
-                  My Hosted Meetings
-                </h2>
+
+
+          {/* Quick link to Meetings page */}
+          <div
+            style={{
+              background: "var(--bg-surface)",
+              border: "1px solid var(--border-subtle)",
+              borderRadius: "var(--radius-lg)",
+              padding: "18px 24px",
+              marginTop: "24px",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              flexWrap: "wrap",
+              gap: "12px",
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+              <div
+                style={{
+                  width: "38px",
+                  height: "38px",
+                  borderRadius: "10px",
+                  background: "rgba(56, 189, 248, 0.15)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  color: "var(--primary)",
+                }}
+              >
+                <Calendar size={20} />
               </div>
+              <div>
+                <h3 style={{ fontSize: "15px", fontWeight: "700", color: "#ffffff", margin: 0 }}>
+                  Looking for your previous meetings & recordings?
+                </h3>
+                <p style={{ fontSize: "12px", color: "var(--text-secondary)", margin: 0 }}>
+                  Review Whisper transcripts, AI summaries, decisions, and past participant history in Meetings.
+                </p>
+              </div>
+            </div>
+
+            <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
               <button
                 type="button"
                 className="btn btn-secondary"
-                style={{ padding: "6px 12px", fontSize: "12px" }}
-                onClick={fetchMyMeetings}
+                onClick={() => navigate("/hosted-meetings")}
+                style={{ display: "flex", alignItems: "center", gap: "6px" }}
               >
-                <RefreshCw size={13} />
-                <span>Refresh</span>
+                <Calendar size={14} />
+                <span>Hosted Meetings</span>
+              </button>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => navigate("/joined-meetings")}
+                style={{ display: "flex", alignItems: "center", gap: "6px" }}
+              >
+                <Users size={14} />
+                <span>Joined Meetings</span>
               </button>
             </div>
-
-            {loadingMeetings ? (
-              <div style={{ padding: "30px", textAlign: "center" }}>
-                <LoadingSpinner size={24} text="Loading meetings..." />
-              </div>
-            ) : myMeetings.length === 0 ? (
-              <div
-                style={{
-                  padding: "36px",
-                  textAlign: "center",
-                  background: "var(--bg-main)",
-                  borderRadius: "var(--radius-md)",
-                  border: "1px dashed var(--border-subtle)",
-                }}
-              >
-                <p style={{ color: "var(--text-secondary)", fontSize: "14px", margin: 0 }}>
-                  You haven't hosted any meetings yet. Create your first meeting above to invite colleagues!
-                </p>
-              </div>
-            ) : (
-              <div style={{ overflowX: "auto" }}>
-                <table style={{ width: "100%", borderCollapse: "collapse", textAlign: "left", fontSize: "13px" }}>
-                  <thead>
-                    <tr style={{ borderBottom: "1px solid var(--border-base)", color: "var(--text-muted)" }}>
-                      <th style={{ padding: "10px 12px" }}>Meeting Topic</th>
-                      <th style={{ padding: "10px 12px" }}>Platform</th>
-                      <th style={{ padding: "10px 12px" }}>Meeting ID</th>
-                      <th style={{ padding: "10px 12px" }}>Password</th>
-                      <th style={{ padding: "10px 12px" }}>Status</th>
-                      <th style={{ padding: "10px 12px", textAlign: "right" }}>Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {myMeetings.map((m) => (
-                      <tr key={m.id} style={{ borderBottom: "1px solid var(--border-subtle)" }}>
-                        <td style={{ padding: "12px", fontWeight: "600", color: "#ffffff" }}>
-                          {m.title}
-                        </td>
-                        <td style={{ padding: "12px" }}>
-                          {m.meeting_type === "google_meet" ? (
-                            <span
-                              style={{
-                                display: "inline-flex",
-                                alignItems: "center",
-                                gap: "4px",
-                                background: "rgba(234, 67, 53, 0.15)",
-                                color: "#ea4335",
-                                padding: "2px 8px",
-                                borderRadius: "12px",
-                                fontSize: "11px",
-                                fontWeight: "700",
-                              }}
-                            >
-                              Google Meet
-                            </span>
-                          ) : (
-                            <span
-                              style={{
-                                display: "inline-flex",
-                                alignItems: "center",
-                                gap: "4px",
-                                background: "rgba(56, 189, 248, 0.15)",
-                                color: "var(--primary)",
-                                padding: "2px 8px",
-                                borderRadius: "12px",
-                                fontSize: "11px",
-                                fontWeight: "700",
-                              }}
-                            >
-                              AI Intel Room
-                            </span>
-                          )}
-                        </td>
-                        <td style={{ padding: "12px", fontFamily: "monospace", color: "var(--primary)", fontWeight: "700" }}>
-                          {m.room_code}
-                        </td>
-                        <td style={{ padding: "12px" }}>
-                          {m.passcode ? (
-                            <span
-                              style={{
-                                fontFamily: "monospace",
-                                color: "#fbbf24",
-                                fontWeight: "700",
-                                background: "rgba(245, 158, 11, 0.1)",
-                                padding: "2px 6px",
-                                borderRadius: "4px",
-                              }}
-                            >
-                              {m.passcode}
-                            </span>
-                          ) : (
-                            <span style={{ color: "var(--text-muted)" }}>None</span>
-                          )}
-                        </td>
-                        <td style={{ padding: "12px" }}>
-                          <span
-                            style={{
-                              padding: "2px 8px",
-                              borderRadius: "10px",
-                              fontSize: "11px",
-                              fontWeight: "600",
-                              background:
-                                m.status === "active"
-                                  ? "rgba(16, 185, 129, 0.15)"
-                                  : "rgba(100, 116, 139, 0.15)",
-                              color:
-                                m.status === "active"
-                                  ? "var(--accent-emerald)"
-                                  : "var(--text-secondary)",
-                            }}
-                          >
-                            {m.status}
-                          </span>
-                        </td>
-                        <td style={{ padding: "12px", textAlign: "right" }}>
-                          <div style={{ display: "inline-flex", gap: "8px" }}>
-                            <button
-                              type="button"
-                              className="btn btn-secondary"
-                              style={{ padding: "6px 10px", fontSize: "12px", color: "var(--primary)" }}
-                              onClick={() => openIntelModal(m)}
-                              title="View AI Meeting Intelligence, Notes & Transcripts"
-                            >
-                              <Sparkles size={14} />
-                              <span>Intel</span>
-                            </button>
-                            <button
-                              type="button"
-                              className="btn btn-secondary"
-                              style={{ padding: "6px 10px", fontSize: "12px" }}
-                              onClick={() => openInviteModal(m)}
-                              title="Send Email Invites"
-                            >
-                              <Mail size={14} />
-                              <span>Invite</span>
-                            </button>
-                            <button
-                              type="button"
-                              className="btn btn-primary"
-                              style={{ padding: "6px 12px", fontSize: "12px" }}
-                              onClick={() => {
-                                if (m.meeting_type === "google_meet" && m.external_link) {
-                                  window.open(m.external_link, "_blank");
-                                } else {
-                                  navigate(`/meeting/${m.room_code}`);
-                                }
-                              }}
-                            >
-                              <span>Enter</span>
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
           </div>
         </div>
+
+        {/* Copyright Footer */}
+        <footer
+          style={{
+            padding: "20px 24px",
+            textAlign: "center",
+            borderTop: "1px solid var(--border-subtle)",
+            color: "var(--text-muted)",
+            fontSize: "13px",
+            background: "var(--bg-main)",
+            marginTop: "auto",
+          }}
+        >
+          <span>© {new Date().getFullYear()} AI Meeting Intelligence. All rights reserved.</span>
+        </footer>
       </div>
 
       {/* Invite Attendees Modal */}
@@ -966,13 +631,6 @@ export default function Dashboard() {
         isOpen={inviteModalOpen}
         onClose={() => setInviteModalOpen(false)}
         meeting={selectedMeetingForInvite}
-      />
-
-      {/* Meeting Intelligence Modal */}
-      <MeetingIntelligenceModal
-        isOpen={intelModalOpen}
-        onClose={() => setIntelModalOpen(false)}
-        meeting={selectedMeetingForIntel}
       />
     </div>
   );

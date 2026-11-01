@@ -24,6 +24,12 @@ import {
   User,
   Radio,
   Lock,
+  Hand,
+  MessageSquare,
+  Send,
+  UserX,
+  VolumeX,
+  Crown,
 } from "lucide-react";
 import api from "../api";
 import { useToast } from "../context/ToastContext";
@@ -54,6 +60,7 @@ function MeetingRoom() {
 
   // Local media controls
   const [micOn, setMicOn] = useState(true);
+  const micOnRef = useRef(true);
   const [cameraOn, setCameraOn] = useState(true);
   const [screenSharing, setScreenSharing] = useState(false);
 
@@ -74,26 +81,41 @@ function MeetingRoom() {
   const [transcriptFilter, setTranscriptFilter] = useState("");
 
   // AI Meeting Intelligence
-  const [activeSidePanel, setActiveSidePanel] = useState("transcript"); // 'transcript' | 'intelligence' | 'participants' | null
+  const [activeSidePanel, setActiveSidePanel] = useState("transcript"); // 'transcript' | 'intelligence' | 'participants' | 'chat' | null
   const [intelligence, setIntelligence] = useState(null);
   const [generatingIntelligence, setGeneratingIntelligence] = useState(false);
+
+  // Raise Hand Feature
+  const [isHandRaised, setIsHandRaised] = useState(false);
+  const [raisedHands, setRaisedHands] = useState({}); // { [socket_id]: { display_name, timestamp } }
+
+  // In-Meeting Chatbox Feature
+  const [chatMessages, setChatMessages] = useState([]);
+  const [newChatMessage, setNewChatMessage] = useState("");
+  const [unreadChatCount, setUnreadChatCount] = useState(0);
+  const chatEndRef = useRef(null);
+
+  // Host Controls & Permissions
+  const [isHost, setIsHost] = useState(false);
 
   const user = JSON.parse(localStorage.getItem("user") || "{}");
   const displayName = user?.name || "Guest";
 
   const rtcConfiguration = {
     iceServers: [
+      { urls: "stun:stun.cloudflare.com:3478" },
       { urls: "stun:stun.l.google.com:19302" },
       { urls: "stun:stun1.l.google.com:19302" },
       { urls: "stun:stun2.l.google.com:19302" },
+      { urls: "stun:stun.voip.blackberry.com:3478" },
     ],
+    iceCandidatePoolSize: 10,
   };
 
   const getSocketUrl = () => {
     if (import.meta.env.VITE_SOCKET_URL) return import.meta.env.VITE_SOCKET_URL;
     if (import.meta.env.VITE_API_URL) return import.meta.env.VITE_API_URL;
-    const host = window.location.hostname || "localhost";
-    return `http://${host}:5000`;
+    return typeof window !== "undefined" ? window.location.origin : "http://localhost:5000";
   };
 
   // --------------------------------------------------
@@ -102,14 +124,33 @@ function MeetingRoom() {
   useEffect(() => {
     startMeeting();
 
-    // Fetch meeting details
+    // Fetch meeting details & verify host status
     api
       .get(`/api/meetings/check/${roomCode}`)
       .then((res) => {
         setMeetingDetails(res.data);
+        const currentUser = JSON.parse(localStorage.getItem("user") || "{}");
+        if (res.data?.host_user_id && currentUser?.id) {
+          const hostMatch = Number(res.data.host_user_id) === Number(currentUser.id);
+          setIsHost(hostMatch);
+        } else if (res.data?.host_name && currentUser?.name) {
+          setIsHost(res.data.host_name.trim().toLowerCase() === currentUser.name.trim().toLowerCase());
+        }
       })
       .catch((err) => {
         console.warn("Could not fetch meeting info:", err);
+      });
+
+    // Fetch existing chat messages for room
+    api
+      .get(`/api/meetings/${roomCode}/messages`)
+      .then((res) => {
+        if (res.data?.messages) {
+          setChatMessages(res.data.messages);
+        }
+      })
+      .catch((err) => {
+        console.warn("Could not pre-fetch chat messages:", err);
       });
 
     // Fetch existing transcripts for room
@@ -136,16 +177,28 @@ function MeetingRoom() {
     }
   }, [transcripts, activeSidePanel]);
 
+  // Auto-scroll chat feed & reset unread count when chat is opened
+  useEffect(() => {
+    if (activeSidePanel === "chat") {
+      setUnreadChatCount(0);
+      if (chatEndRef.current) {
+        chatEndRef.current.scrollIntoView({ behavior: "smooth" });
+      }
+    }
+  }, [chatMessages, activeSidePanel]);
+
   // --------------------------------------------------
   // Participant State Management
   // --------------------------------------------------
-  const addParticipant = (socketId, participantName) => {
+  const addParticipant = (socketId, participantName, userId = null) => {
     if (!socketId) return;
 
     setParticipants((previous) => {
       const exists = previous.some((p) => p.socket_id === socketId);
-      if (exists) return previous;
-      return [...previous, { socket_id: socketId, display_name: participantName }];
+      if (exists) {
+        return previous.map((p) => (p.socket_id === socketId ? { ...p, display_name: participantName, user_id: userId || p.user_id } : p));
+      }
+      return [...previous, { socket_id: socketId, display_name: participantName, user_id: userId }];
     });
   };
 
@@ -223,9 +276,7 @@ function MeetingRoom() {
     peerConnection.onconnectionstatechange = () => {
       console.log("WebRTC connection state:", targetSocketId, peerConnection.connectionState);
       if (
-        peerConnection.connectionState === "failed" ||
-        peerConnection.connectionState === "closed" ||
-        peerConnection.connectionState === "disconnected"
+        peerConnection.connectionState === "closed"
       ) {
         removePeer(targetSocketId);
       }
@@ -291,12 +342,14 @@ function MeetingRoom() {
           {
             socket_id: socket.id,
             display_name: displayName,
+            user_id: user?.id,
           },
         ]);
 
         socket.emit("join-room", {
           room_code: roomCode,
           display_name: displayName,
+          user_id: user?.id,
         });
 
         // Broadcast current media state
@@ -320,7 +373,7 @@ function MeetingRoom() {
       });
 
       socket.on("existing-participant", async (data) => {
-        addParticipant(data.socket_id, data.display_name);
+        addParticipant(data.socket_id, data.display_name, data.user_id);
         await startOffer(socket, data.socket_id);
 
         // Send media state to newcomer
@@ -334,8 +387,10 @@ function MeetingRoom() {
       });
 
       socket.on("user-joined", (data) => {
-        addParticipant(data.socket_id, data.display_name);
+        addParticipant(data.socket_id, data.display_name, data.user_id);
         toast.info(`${data.display_name} joined the meeting.`);
+        // Newcomer receives 'existing-participant' and will initiate the offer.
+        // We do not send offer here to prevent glare/dual-offer race conditions.
       });
 
       socket.on("offer", async (data) => {
@@ -414,7 +469,116 @@ function MeetingRoom() {
 
       socket.on("user-left", (data) => {
         removePeer(data.socket_id);
-        toast.info(`${data.display_name} left the room.`);
+        setRaisedHands((prev) => {
+          const copy = { ...prev };
+          delete copy[data.socket_id];
+          return copy;
+        });
+        if (data.was_removed) {
+          toast.warning(`${data.display_name} was removed by the host.`);
+        } else {
+          toast.info(`${data.display_name} left the room.`);
+        }
+      });
+
+      // --- Raise Hand Listener ---
+      socket.on("hand-toggled", (data) => {
+        setRaisedHands((prev) => {
+          const next = { ...prev };
+          if (data.raised) {
+            next[data.socket_id] = {
+              display_name: data.display_name,
+              timestamp: data.timestamp,
+            };
+          } else {
+            delete next[data.socket_id];
+          }
+          return next;
+        });
+
+        if (data.socket_id === socket.id) {
+          setIsHandRaised(data.raised);
+        }
+
+        if (data.raised && data.socket_id !== socket.id) {
+          toast.info(`✋ ${data.display_name} raised their hand.`);
+        }
+      });
+
+      // --- Chat Messages Listener ---
+      socket.on("new-chat-message", (msg) => {
+        setChatMessages((prev) => [...prev, msg]);
+        if (activeSidePanel !== "chat" && msg.sender_name !== displayName) {
+          setUnreadChatCount((prev) => prev + 1);
+        }
+      });
+
+      // --- Host Control Listeners (Mute & Removal) ---
+      socket.on("force-mute", (data) => {
+        if (data.target_socket_id === socket.id) {
+          if (localStreamRef.current) {
+            localStreamRef.current.getAudioTracks().forEach((track) => {
+              track.enabled = false;
+            });
+          }
+          setMicOn(false);
+          micOnRef.current = false;
+          toast.warning(data.message || "You were muted by the meeting host.");
+
+          socket.emit("peer-media-state", {
+            room_code: roomCode,
+            display_name: displayName,
+            mic_on: false,
+            camera_on: cameraOn,
+            screen_sharing: screenSharing,
+          });
+        }
+      });
+
+      socket.on("force-mute-all", (data) => {
+        // If you are not the host who triggered mute-all, mute your microphone
+        if (data.host_socket_id !== socket.id) {
+          if (localStreamRef.current) {
+            localStreamRef.current.getAudioTracks().forEach((track) => {
+              track.enabled = false;
+            });
+          }
+          setMicOn(false);
+          micOnRef.current = false;
+          toast.warning(data.message || "All participants were muted by the host.");
+
+          socket.emit("peer-media-state", {
+            room_code: roomCode,
+            display_name: displayName,
+            mic_on: false,
+            camera_on: cameraOn,
+            screen_sharing: screenSharing,
+          });
+        }
+      });
+
+      socket.on("participant-removed", (data) => {
+        disconnectMeeting();
+        toast.error(data.message || "You have been removed from this meeting by the host.");
+        setTimeout(() => {
+          navigate("/dashboard");
+        }, 1500);
+      });
+
+      socket.on("meeting-removal-rejected", (data) => {
+        toast.error(data.message || "Access denied: you were removed by the host.");
+        disconnectMeeting();
+        navigate("/dashboard");
+      });
+
+      socket.on("meeting-ended-by-host", (data) => {
+        disconnectMeeting();
+        toast.info(data.message || "The host has ended this meeting.");
+        navigate(`/meeting-ended/${roomCode}`);
+      });
+
+      socket.on("host-action-denied", (data) => {
+        toast.error(data.message || "Unauthorized action.");
       });
 
       socket.on("disconnect", () => {
@@ -446,6 +610,83 @@ function MeetingRoom() {
   };
 
   // --------------------------------------------------
+  // Raise Hand Action
+  // --------------------------------------------------
+  const toggleRaiseHand = () => {
+    const next = !isHandRaised;
+    setIsHandRaised(next);
+    socketRef.current?.emit("toggle-hand", {
+      room_code: roomCode,
+      raised: next,
+    });
+    if (next) {
+      toast.success("Hand raised.");
+    } else {
+      toast.info("Hand lowered.");
+    }
+  };
+
+  // --------------------------------------------------
+  // Chatbox Send Action
+  // --------------------------------------------------
+  const handleSendChatMessage = (e) => {
+    e?.preventDefault();
+    if (!newChatMessage.trim()) return;
+
+    socketRef.current?.emit("send-chat-message", {
+      room_code: roomCode,
+      message: newChatMessage.trim(),
+      sender_name: displayName,
+      user_id: user?.id,
+    });
+
+    setNewChatMessage("");
+  };
+
+  // --------------------------------------------------
+  // Host Controls: Mute, Mute All, Remove Participant
+  // --------------------------------------------------
+  const handleHostMuteParticipant = (targetSocketId, targetName) => {
+    if (!isHost) {
+      toast.error("Only the host can mute participants.");
+      return;
+    }
+    socketRef.current?.emit("host-mute-participant", {
+      room_code: roomCode,
+      host_user_id: user?.id,
+      target_socket_id: targetSocketId,
+    });
+    toast.info(`Mute command sent to ${targetName}.`);
+  };
+
+  const handleHostMuteAll = () => {
+    if (!isHost) {
+      toast.error("Only the host can mute all participants.");
+      return;
+    }
+    socketRef.current?.emit("host-mute-all", {
+      room_code: roomCode,
+      host_user_id: user?.id,
+    });
+    toast.info("Muted all participants.");
+  };
+
+  const handleHostRemoveParticipant = (targetSocketId, targetName) => {
+    if (!isHost) {
+      toast.error("Only the host can remove participants.");
+      return;
+    }
+    if (window.confirm(`Are you sure you want to remove ${targetName} from the meeting? They will not be able to rejoin.`)) {
+      socketRef.current?.emit("host-remove-participant", {
+        room_code: roomCode,
+        host_user_id: user?.id,
+        target_socket_id: targetSocketId,
+      });
+      toast.warning(`Removed ${targetName} from meeting.`);
+    }
+  };
+
+  // --------------------------------------------------
   // Camera & Mic Controls
   // --------------------------------------------------
   const toggleMicrophone = () => {
@@ -458,6 +699,7 @@ function MeetingRoom() {
     });
 
     setMicOn(nextState);
+    micOnRef.current = nextState;
 
     // Notify room of media state
     socketRef.current?.emit("peer-media-state", {
@@ -654,55 +896,85 @@ function encodeWAV(samples, sampleRate = 16000) {
       // Must connect processor to destination so it continues processing
       processor.connect(audioCtx.destination);
 
-      // 3. Dispatch accumulated audio chunks every 3.5 seconds as clean WAV files
+      // 3. Dispatch accumulated speech chunks with overlap so words are never cut in half
+      let overlapBuffer = new Float32Array(0);
+
       sendIntervalRef.current = setInterval(() => {
         if (!socketRef.current?.connected) return;
+
+        // If local microphone is muted, do not send audio chunks for transcription
+        if (!micOnRef.current) {
+          pcmBufferRef.current = [];
+          overlapBuffer = new Float32Array(0);
+          return;
+        }
 
         const chunks = pcmBufferRef.current;
         pcmBufferRef.current = [];
 
-        if (chunks.length === 0) return;
+        if (chunks.length === 0 && overlapBuffer.length === 0) return;
 
-        let totalLength = 0;
-        for (const c of chunks) totalLength += c.length;
+        let newLength = 0;
+        for (const c of chunks) newLength += c.length;
 
-        // Ensure we have at least 1.5 seconds of audio (~24,000 samples at 16kHz)
-        if (totalLength < 16000 * 1.5) {
-          // Put back if not enough audio accumulated yet
-          pcmBufferRef.current = chunks.concat(pcmBufferRef.current);
-          return;
-        }
-
-        const merged = new Float32Array(totalLength);
-        let offset = 0;
+        // Merge overlap (previous 0.75s) with new chunks
+        const merged = new Float32Array(overlapBuffer.length + newLength);
+        merged.set(overlapBuffer, 0);
+        let offset = overlapBuffer.length;
         for (const c of chunks) {
           merged.set(c, offset);
           offset += c.length;
         }
 
-        // Check if there is actual sound (skip absolute silence to save bandwidth/compute)
-        let maxAmp = 0;
-        for (let i = 0; i < merged.length; i++) {
-          const abs = Math.abs(merged[i]);
-          if (abs > maxAmp) maxAmp = abs;
+        // Keep last 0.75 seconds (~12,000 samples) as overlap for next chunk to avoid cut-off words
+        const overlapSamples = 16000 * 0.75;
+        if (merged.length > overlapSamples) {
+          overlapBuffer = merged.slice(merged.length - overlapSamples);
+        } else {
+          overlapBuffer = new Float32Array(0);
         }
 
-        if (maxAmp < 0.015) {
-          return; // Pure background silence
+        // Require at least 2 seconds total audio for accurate phonetic context
+        if (merged.length < 16000 * 2.0) {
+          return;
+        }
+
+        // Voice Activity Detection (VAD): Calculate RMS energy and peak amplitude
+        let sumSquares = 0;
+        let maxAmp = 0;
+        for (let i = 0; i < merged.length; i++) {
+          const val = merged[i];
+          const abs = Math.abs(val);
+          if (abs > maxAmp) maxAmp = abs;
+          sumSquares += val * val;
+        }
+        const rms = Math.sqrt(sumSquares / merged.length);
+
+        // Require genuine voice energy: peak >= 0.05 and RMS >= 0.012
+        // Prevents ambient microphone hiss, fan noise, or silence from reaching the AI transcription engine
+        if (maxAmp < 0.05 || rms < 0.012) {
+          return; // Silence or background room noise only
         }
 
         // Encode to pristine RIFF WAV bytes (sample rate 16000, 16-bit mono)
         const wavBytes = encodeWAV(merged, 16000);
 
+        // Collect names of all participants in the meeting room
+        const currentParticipantNames = [
+          displayName,
+          ...participants.map((p) => p.display_name).filter(Boolean),
+        ];
+
         socketRef.current.emit("audio-chunk", {
           room_code: roomCode,
           audio: Array.from(wavBytes),
           speaker_name: displayName,
+          participant_names: currentParticipantNames,
           is_mixed: true,
         });
-      }, 3500);
+      }, 4000);
 
-      setTranscribing(true);
+            setTranscribing(true);
 
       socketRef.current?.emit("toggle-transcription", {
         room_code: roomCode,
@@ -841,11 +1113,15 @@ function encodeWAV(samples, sampleRate = 16000) {
 
   const leaveMeeting = () => {
     disconnectMeeting();
-    api.post(`/api/meetings/${roomCode}/end`).catch(() => {});
     navigate("/dashboard");
   };
 
   const endMeetingAndViewResults = () => {
+    // Notify all participants in real time that host ended the meeting
+    socketRef.current?.emit("host-end-meeting", {
+      room_code: roomCode,
+      host_user_id: user?.id,
+    });
     disconnectMeeting();
     api
       .post(`/api/meetings/${roomCode}/end`)
@@ -1162,7 +1438,7 @@ function encodeWAV(samples, sampleRate = 16000) {
                 </div>
               )}
 
-              {/* Participant Name & Mic Badge */}
+              {/* Participant Name & Mic Badge & Hand Badge */}
               <div
                 style={{
                   position: "absolute",
@@ -1180,7 +1456,17 @@ function encodeWAV(samples, sampleRate = 16000) {
                   color: "#ffffff",
                 }}
               >
+                {isHost && (
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: "2px", color: "var(--accent-amber)", fontSize: "11px", fontWeight: "700" }}>
+                    <Crown size={12} /> Host
+                  </span>
+                )}
                 <span>{displayName} (You)</span>
+                {isHandRaised && (
+                  <span style={{ background: "rgba(245, 158, 11, 0.2)", padding: "1px 5px", borderRadius: "10px", fontSize: "11px", display: "inline-flex", alignItems: "center", gap: "3px", color: "var(--accent-amber)" }}>
+                    ✋ Hand Raised
+                  </span>
+                )}
                 {micOn ? (
                   <Mic size={13} color="var(--accent-emerald)" />
                 ) : (
@@ -1225,6 +1511,7 @@ function encodeWAV(samples, sampleRate = 16000) {
                     ref={(element) => {
                       if (element && element.srcObject !== remote.stream) {
                         element.srcObject = remote.stream;
+                        element.play().catch((e) => console.warn("Remote video play error:", e));
                       }
                     }}
                   />
@@ -1273,7 +1560,17 @@ function encodeWAV(samples, sampleRate = 16000) {
                       color: "#ffffff",
                     }}
                   >
+                    {meetingDetails?.host_user_id && participantInfo?.user_id && Number(meetingDetails.host_user_id) === Number(participantInfo.user_id) && (
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: "2px", color: "var(--accent-amber)", fontSize: "11px", fontWeight: "700" }}>
+                        <Crown size={12} /> Host
+                      </span>
+                    )}
                     <span>{pName}</span>
+                    {raisedHands[remote.socketId] && (
+                      <span style={{ background: "rgba(245, 158, 11, 0.2)", padding: "1px 5px", borderRadius: "10px", fontSize: "11px", display: "inline-flex", alignItems: "center", gap: "3px", color: "var(--accent-amber)" }}>
+                        ✋ Hand Raised
+                      </span>
+                    )}
                     {mediaState.mic_on !== false ? (
                       <Mic size={13} color="var(--accent-emerald)" />
                     ) : (
@@ -1372,7 +1669,7 @@ function encodeWAV(samples, sampleRate = 16000) {
                 }}
               >
                 <Sparkles size={14} />
-                <span>AI Intel</span>
+                <span>Summary</span>
               </button>
 
               <button
@@ -1396,6 +1693,49 @@ function encodeWAV(samples, sampleRate = 16000) {
               >
                 <UsersIcon size={14} />
                 <span>Roster ({participants.length})</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setActiveSidePanel("chat")}
+                style={{
+                  flex: 1,
+                  padding: "8px 4px",
+                  fontSize: "12px",
+                  fontWeight: "700",
+                  border: "none",
+                  borderRadius: "var(--radius-sm)",
+                  cursor: "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: "6px",
+                  position: "relative",
+                  background: activeSidePanel === "chat" ? "var(--primary)" : "transparent",
+                  color: activeSidePanel === "chat" ? "#ffffff" : "var(--text-secondary)",
+                }}
+              >
+                <MessageSquare size={14} />
+                <span>Chat</span>
+                {unreadChatCount > 0 && activeSidePanel !== "chat" && (
+                  <span
+                    style={{
+                      position: "absolute",
+                      top: "2px",
+                      right: "6px",
+                      background: "var(--accent-rose)",
+                      color: "#fff",
+                      fontSize: "10px",
+                      fontWeight: "800",
+                      padding: "1px 5px",
+                      borderRadius: "10px",
+                      minWidth: "16px",
+                      textAlign: "center",
+                    }}
+                  >
+                    {unreadChatCount}
+                  </span>
+                )}
               </button>
             </div>
 
@@ -1595,14 +1935,74 @@ function encodeWAV(samples, sampleRate = 16000) {
               </div>
             )}
 
-            {/* TAB 3: PARTICIPANTS ROSTER */}
+            {/* TAB 3: PARTICIPANTS ROSTER (With Host Controls & Raised Hand Indicators) */}
             {activeSidePanel === "participants" && (
               <div style={{ flex: 1, overflowY: "auto", padding: "14px", display: "flex", flexDirection: "column", gap: "8px" }}>
+                {/* Host Control Actions Header */}
+                {isHost && (
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      padding: "8px 12px",
+                      background: "rgba(245, 158, 11, 0.1)",
+                      border: "1px solid rgba(245, 158, 11, 0.25)",
+                      borderRadius: "var(--radius-md)",
+                      marginBottom: "6px",
+                    }}
+                  >
+                    <span style={{ fontSize: "12px", fontWeight: "700", color: "var(--accent-amber)", display: "flex", alignItems: "center", gap: "5px" }}>
+                      <Crown size={14} /> Host Controls
+                    </span>
+                    <button
+                      type="button"
+                      onClick={handleHostMuteAll}
+                      className="btn btn-secondary"
+                      style={{ padding: "4px 8px", fontSize: "11px", color: "var(--accent-rose)", display: "flex", alignItems: "center", gap: "4px" }}
+                      title="Mute all other participants"
+                    >
+                      <VolumeX size={12} />
+                      <span>Mute All</span>
+                    </button>
+                  </div>
+                )}
+
+                {/* Raised Hands Section if any hands are raised */}
+                {Object.keys(raisedHands).length > 0 && (
+                  <div
+                    style={{
+                      background: "rgba(245, 158, 11, 0.08)",
+                      border: "1px solid rgba(245, 158, 11, 0.2)",
+                      borderRadius: "var(--radius-md)",
+                      padding: "10px",
+                      marginBottom: "8px",
+                    }}
+                  >
+                    <div style={{ fontSize: "12px", fontWeight: "700", color: "var(--accent-amber)", marginBottom: "6px", display: "flex", alignItems: "center", gap: "4px" }}>
+                      <span>✋ Raised Hands ({Object.keys(raisedHands).length})</span>
+                    </div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+                      {Object.entries(raisedHands).map(([sid, h]) => (
+                        <div key={sid} style={{ fontSize: "12px", color: "#ffffff", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                          <span>{h.display_name}</span>
+                          <span style={{ fontSize: "10px", color: "var(--text-muted)" }}>
+                            {new Date(h.timestamp || Date.now()).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Participant List */}
                 {participants.map((p) => {
                   const isYou = p.socket_id === socketRef.current?.id;
                   const mState = isYou
                     ? { mic_on: micOn, camera_on: cameraOn }
                     : peerMediaStates[p.socket_id] || { mic_on: true, camera_on: true };
+                  const isParticipantHost = meetingDetails?.host_user_id && p.user_id && Number(meetingDetails.host_user_id) === Number(p.user_id);
+                  const hasHandRaised = isYou ? isHandRaised : Boolean(raisedHands[p.socket_id]);
 
                   return (
                     <div
@@ -1634,9 +2034,21 @@ function encodeWAV(samples, sampleRate = 16000) {
                         >
                           {p.display_name.charAt(0).toUpperCase()}
                         </div>
-                        <span style={{ fontSize: "13px", fontWeight: "600", color: "#ffffff" }}>
-                          {p.display_name} {isYou && "(You)"}
-                        </span>
+                        <div>
+                          <div style={{ fontSize: "13px", fontWeight: "600", color: "#ffffff", display: "flex", alignItems: "center", gap: "6px" }}>
+                            <span>{p.display_name} {isYou && "(You)"}</span>
+                            {isParticipantHost && (
+                              <span style={{ fontSize: "10px", color: "var(--accent-amber)", display: "inline-flex", alignItems: "center", gap: "2px", fontWeight: "700" }}>
+                                <Crown size={11} /> Host
+                              </span>
+                            )}
+                          </div>
+                          {hasHandRaised && (
+                            <div style={{ fontSize: "11px", color: "var(--accent-amber)", display: "flex", alignItems: "center", gap: "3px" }}>
+                              <span>✋ Hand raised</span>
+                            </div>
+                          )}
+                        </div>
                       </div>
 
                       <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
@@ -1650,10 +2062,114 @@ function encodeWAV(samples, sampleRate = 16000) {
                         ) : (
                           <VideoOff size={14} color="var(--text-muted)" />
                         )}
+
+                        {/* Host Controls for individual attendee (Mute & Remove) */}
+                        {isHost && !isYou && (
+                          <div style={{ display: "flex", alignItems: "center", gap: "4px", marginLeft: "4px" }}>
+                            <button
+                              type="button"
+                              onClick={() => handleHostMuteParticipant(p.socket_id, p.display_name)}
+                              className="btn btn-secondary"
+                              style={{ padding: "4px 6px", fontSize: "11px", height: "26px", color: "var(--accent-rose)" }}
+                              title={`Mute ${p.display_name}`}
+                            >
+                              <VolumeX size={12} />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleHostRemoveParticipant(p.socket_id, p.display_name)}
+                              className="btn btn-secondary"
+                              style={{ padding: "4px 6px", fontSize: "11px", height: "26px", color: "var(--accent-rose)" }}
+                              title={`Remove ${p.display_name} from meeting`}
+                            >
+                              <UserX size={12} />
+                            </button>
+                          </div>
+                        )}
                       </div>
                     </div>
                   );
                 })}
+              </div>
+            )}
+
+            {/* TAB 4: REAL-TIME IN-MEETING CHATBOX */}
+            {activeSidePanel === "chat" && (
+              <div style={{ display: "flex", flexDirection: "column", flex: 1, overflow: "hidden" }}>
+                {/* Chat Feed */}
+                <div style={{ flex: 1, overflowY: "auto", padding: "14px", display: "flex", flexDirection: "column", gap: "10px" }}>
+                  {chatMessages.length === 0 ? (
+                    <div style={{ textAlign: "center", padding: "40px 10px", color: "var(--text-muted)", fontSize: "13px" }}>
+                      <MessageSquare size={24} color="var(--text-muted)" style={{ margin: "0 auto 8px" }} />
+                      <p style={{ margin: 0 }}>No messages yet.</p>
+                      <p style={{ fontSize: "12px", marginTop: "4px" }}>Send a message to everyone in this meeting!</p>
+                    </div>
+                  ) : (
+                    chatMessages.map((msg, index) => {
+                      const isSelf = msg.sender_name === displayName;
+                      return (
+                        <div
+                          key={msg.id || index}
+                          style={{
+                            alignSelf: isSelf ? "flex-end" : "flex-start",
+                            maxWidth: "85%",
+                            display: "flex",
+                            flexDirection: "column",
+                            gap: "2px",
+                          }}
+                        >
+                          <div style={{ fontSize: "11px", color: "var(--text-muted)", alignSelf: isSelf ? "flex-end" : "flex-start" }}>
+                            {isSelf ? "You" : msg.sender_name} • {msg.created_at ? new Date(msg.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}
+                          </div>
+                          <div
+                            style={{
+                              padding: "8px 12px",
+                              borderRadius: "var(--radius-md)",
+                              fontSize: "13px",
+                              lineHeight: "1.4",
+                              background: isSelf ? "var(--primary)" : "var(--bg-card)",
+                              color: isSelf ? "#ffffff" : "var(--text-primary)",
+                              border: isSelf ? "none" : "1px solid var(--border-subtle)",
+                              wordBreak: "break-word",
+                            }}
+                          >
+                            {msg.message}
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                  <div ref={chatEndRef} />
+                </div>
+
+                {/* Chat Input Bar */}
+                <form
+                  onSubmit={handleSendChatMessage}
+                  style={{
+                    padding: "12px",
+                    borderTop: "1px solid var(--border-subtle)",
+                    display: "flex",
+                    gap: "8px",
+                  }}
+                >
+                  <input
+                    type="text"
+                    className="input-field"
+                    placeholder="Send a message to everyone..."
+                    value={newChatMessage}
+                    onChange={(e) => setNewChatMessage(e.target.value)}
+                    style={{ flex: 1, fontSize: "13px" }}
+                  />
+                  <button
+                    type="submit"
+                    className="btn btn-primary"
+                    disabled={!newChatMessage.trim()}
+                    style={{ padding: "0 14px", height: "40px" }}
+                    title="Send Message"
+                  >
+                    <Send size={15} />
+                  </button>
+                </form>
               </div>
             )}
           </aside>
@@ -1709,6 +2225,52 @@ function encodeWAV(samples, sampleRate = 16000) {
             title={screenSharing ? "Stop Sharing Screen" : "Share Screen"}
           >
             {screenSharing ? <MonitorOff size={18} /> : <Monitor size={18} />}
+          </button>
+
+          {/* Raise Hand Button */}
+          <button
+            onClick={toggleRaiseHand}
+            className={`btn ${isHandRaised ? "btn-primary" : "btn-secondary"}`}
+            style={{
+              borderRadius: "var(--radius-full)",
+              width: "44px",
+              height: "44px",
+              padding: 0,
+              color: isHandRaised ? "#ffffff" : "var(--accent-amber)",
+              background: isHandRaised ? "var(--accent-amber)" : undefined,
+            }}
+            title={isHandRaised ? "Lower Hand" : "Raise Hand"}
+          >
+            <Hand size={18} />
+          </button>
+
+          {/* Open Chat Button with Unread Badge */}
+          <button
+            onClick={() => setActiveSidePanel(activeSidePanel === "chat" ? null : "chat")}
+            className={`btn ${activeSidePanel === "chat" ? "btn-primary" : "btn-secondary"}`}
+            style={{ borderRadius: "var(--radius-full)", width: "44px", height: "44px", padding: 0, position: "relative" }}
+            title="Meeting Chat"
+          >
+            <MessageSquare size={18} />
+            {unreadChatCount > 0 && activeSidePanel !== "chat" && (
+              <span
+                style={{
+                  position: "absolute",
+                  top: "-2px",
+                  right: "-2px",
+                  background: "var(--accent-rose)",
+                  color: "#fff",
+                  fontSize: "10px",
+                  fontWeight: "800",
+                  padding: "1px 5px",
+                  borderRadius: "10px",
+                  minWidth: "16px",
+                  textAlign: "center",
+                }}
+              >
+                {unreadChatCount}
+              </span>
+            )}
           </button>
 
           {/* Transcription Toggle */}
@@ -1790,10 +2352,10 @@ function encodeWAV(samples, sampleRate = 16000) {
             }}
             className={`btn ${activeSidePanel === "intelligence" ? "btn-primary" : "btn-secondary"}`}
             style={{ padding: "8px 12px", fontSize: "12px" }}
-            title="AI Meeting Intelligence"
+            title="Meeting Summary & AI Notes"
           >
-            <Sparkles size={15} />
-            <span>AI Intel</span>
+            <FileText size={15} />
+            <span>Summary</span>
           </button>
         </div>
       </footer>

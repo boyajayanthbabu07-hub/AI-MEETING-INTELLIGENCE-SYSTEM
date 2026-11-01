@@ -1,23 +1,27 @@
 import { Link, useLocation } from "react-router-dom";
-import { LayoutDashboard, Video, History, UploadCloud, User, Settings, Sparkles } from "lucide-react";
+import { LayoutDashboard, Calendar, Users, User, Settings } from "lucide-react";
 
 export default function Sidebar() {
   const location = useLocation();
 
   const navItems = [
     { label: "Dashboard", path: "/dashboard", icon: LayoutDashboard },
+    { label: "Hosted Meetings", path: "/hosted-meetings", icon: Calendar },
+    { label: "Joined Meetings", path: "/joined-meetings", icon: Users },
     { label: "Profile", path: "/profile", icon: User },
     { label: "Settings", path: "/settings", icon: Settings },
   ];
 
   return (
     <aside className="sidebar">
-      <div className="sidebar-header">
-        <div className="brand-icon" style={{ width: "32px", height: "32px" }}>
-          <Sparkles size={18} />
-        </div>
+      <div className="sidebar-header" style={{ display: "flex", alignItems: "center", gap: "12px", padding: "16px 20px" }}>
+        <img
+          src="/logo.png"
+          alt="AI Meeting Intelligence Logo"
+          style={{ width: "46px", height: "46px", objectFit: "contain", borderRadius: "10px" }}
+        />
         <div>
-          <div style={{ fontSize: "14px", fontWeight: "800", color: "#ffffff" }}>Meeting Intel</div>
+          <div style={{ fontSize: "15px", fontWeight: "800", color: "#ffffff" }}>Meeting Intel</div>
           <div style={{ fontSize: "11px", color: "var(--primary)", fontWeight: "600" }}>AI Platform</div>
         </div>
       </div>
@@ -39,18 +43,6 @@ export default function Sidebar() {
           );
         })}
       </nav>
-
-      <div style={{ padding: "16px", borderTop: "1px solid var(--border-subtle)", margin: "auto 0 0 0" }}>
-        <div style={{ background: "var(--bg-card)", border: "1px solid var(--border-subtle)", borderRadius: "var(--radius-md)", padding: "12px" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: "6px", color: "var(--accent-emerald)", fontSize: "12px", fontWeight: "700" }}>
-            <span style={{ width: "8px", height: "8px", borderRadius: "50%", background: "var(--accent-emerald)" }} />
-            <span>AI Online</span>
-          </div>
-          <div style={{ fontSize: "11px", color: "var(--text-muted)", marginTop: "4px" }}>
-            Whisper & NLP Active
-          </div>
-        </div>
-      </div>
     </aside>
   );
 }

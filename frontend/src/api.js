@@ -1,12 +1,15 @@
 
 import axios from "axios";
 
-const baseURL =
-  import.meta.env.VITE_API_URL ||
-  `http://${window.location.hostname}:5000`;
+const getBaseURL = () => {
+  // If explicitly configured in .env, respect that:
+  if (import.meta.env.VITE_API_URL) return import.meta.env.VITE_API_URL;
+  // If accessed over standard domain (like Cloudflare tunnel or public URL) or localhost with Vite proxy:
+  return "";
+};
 
 const api = axios.create({
-  baseURL,
+  baseURL: getBaseURL(),
   headers: {
     "Content-Type": "application/json",
   },
@@ -14,6 +17,7 @@ const api = axios.create({
 
 api.interceptors.request.use(
   (config) => {
+    config.baseURL = getBaseURL();
     const token = localStorage.getItem("access_token");
 
     if (token) {
@@ -23,6 +27,27 @@ api.interceptors.request.use(
     return config;
   },
   (error) => Promise.reject(error)
+);
+
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response && error.response.status === 401) {
+      const msg = error.response.data?.msg || error.response.data?.message || "";
+      if (
+        msg.toLowerCase().includes("expired") ||
+        msg.toLowerCase().includes("token") ||
+        msg.toLowerCase().includes("signature") ||
+        msg.toLowerCase().includes("unauthorized")
+      ) {
+        localStorage.removeItem("access_token");
+        if (typeof window !== "undefined" && !window.location.pathname.includes("/login")) {
+          window.location.href = "/login?expired=1";
+        }
+      }
+    }
+    return Promise.reject(error);
+  }
 );
 
 export default api;

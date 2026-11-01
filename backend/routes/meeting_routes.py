@@ -12,10 +12,13 @@ from backend.models.models import (
     ActionItem,
     Decision,
     Meeting,
+    MeetingMessage,
+    MeetingRemoval,
     MeetingSummary,
     Participant,
     Transcript,
     User,
+    UserDeletedMeeting,
 )
 from backend.services.email_service import (
     is_smtp_configured,
@@ -187,6 +190,16 @@ def join_meeting():
                 "message": "Meeting has already ended"
             }, 400
 
+        # Check if this user was removed by host from this meeting
+        removal = db.query(MeetingRemoval).filter(
+            MeetingRemoval.meeting_id == meeting.id,
+            MeetingRemoval.user_id == user_id
+        ).first()
+        if removal and not is_host:
+            return {
+                "message": "You were removed from this meeting by the host and cannot rejoin."
+            }, 403
+
         # Password / Passcode enforcement
         # If the user is the host who created the meeting, bypass passcode check
         is_host = meeting.user_id == user_id
@@ -348,6 +361,7 @@ def check_meeting(room_code):
             }, 404
 
         host_name = meeting.user.name if meeting.user else "Host"
+        host_user_id = meeting.user_id
 
         return {
             "exists": True,
@@ -357,7 +371,8 @@ def check_meeting(room_code):
             "requires_passcode": bool(meeting.passcode),
             "meeting_type": meeting.meeting_type,
             "external_link": meeting.external_link,
-            "host_name": host_name
+            "host_name": host_name,
+            "host_user_id": host_user_id,
         }, 200
 
     finally:
@@ -375,10 +390,19 @@ def get_my_meetings():
     db = SessionLocal()
 
     try:
+        deleted_ids = [
+            row[0]
+            for row in db.query(UserDeletedMeeting.meeting_id)
+            .filter(UserDeletedMeeting.user_id == user_id)
+            .all()
+        ]
+
+        query = db.query(Meeting).filter(Meeting.user_id == user_id)
+        if deleted_ids:
+            query = query.filter(Meeting.id.notin_(deleted_ids))
+
         meetings = (
-            db.query(Meeting)
-            .filter(Meeting.user_id == user_id)
-            .order_by(Meeting.created_at.desc())
+            query.order_by(Meeting.created_at.desc())
             .limit(25)
             .all()
         )
@@ -400,6 +424,146 @@ def get_my_meetings():
                 "meeting_type": m.meeting_type,
                 "external_link": m.external_link,
                 "status": m.status,
+                "join_url": join_url,
+                "created_at": m.created_at.isoformat() if m.created_at else None,
+            })
+
+        return {"meetings": result}, 200
+
+    finally:
+        db.close()
+
+
+@meeting_bp.route("/<int:meeting_id>", methods=["DELETE"])
+@jwt_required()
+def delete_meeting_for_user(meeting_id):
+    """
+    Remove / delete meeting from the current user's account only.
+    Does NOT delete the meeting from the database or affect any other participant/host.
+    Preserves all email communications, transcripts, and intelligence reports.
+    """
+    user_id = int(get_jwt_identity())
+    db = SessionLocal()
+
+    try:
+        meeting = db.query(Meeting).filter(Meeting.id == meeting_id).first()
+        if not meeting:
+            return {"message": "Meeting not found"}, 404
+
+        existing = db.query(UserDeletedMeeting).filter(
+            UserDeletedMeeting.user_id == user_id,
+            UserDeletedMeeting.meeting_id == meeting_id
+        ).first()
+
+        if not existing:
+            deleted_record = UserDeletedMeeting(
+                user_id=user_id,
+                meeting_id=meeting_id
+            )
+            db.add(deleted_record)
+            db.commit()
+
+        return {
+            "message": "Meeting removed from your account successfully",
+            "meeting_id": meeting_id
+        }, 200
+
+    except Exception as e:
+        db.rollback()
+        return {"message": "Failed to remove meeting from account", "error": str(e)}, 500
+
+    finally:
+        db.close()
+
+
+# ======================================================================
+# CHAT MESSAGES PERSISTENCE & HISTORY
+# ======================================================================
+
+@meeting_bp.route("/<room_code>/messages", methods=["GET"])
+@jwt_required()
+def get_meeting_messages(room_code):
+    """Retrieve all persisted chat messages for a meeting room."""
+    db = SessionLocal()
+    try:
+        clean_code = room_code.strip().upper()
+        meeting = db.query(Meeting).filter(Meeting.room_code == clean_code).first()
+        if not meeting:
+            return {"message": "Meeting not found"}, 404
+
+        messages = (
+            db.query(MeetingMessage)
+            .filter(MeetingMessage.meeting_id == meeting.id)
+            .order_by(MeetingMessage.created_at.asc())
+            .all()
+        )
+
+        return {
+            "messages": [
+                {
+                    "id": m.id,
+                    "sender_name": m.sender_name,
+                    "message": m.message,
+                    "user_id": m.user_id,
+                    "created_at": m.created_at.isoformat() if m.created_at else None
+                }
+                for m in messages
+            ]
+        }, 200
+    finally:
+        db.close()
+
+
+@meeting_bp.route("/joined-meetings", methods=["GET"])
+@jwt_required()
+def get_joined_meetings():
+    """Retrieve all meetings this user attended as a participant (excluding ones they hosted)."""
+    user_id = int(get_jwt_identity())
+    db = SessionLocal()
+
+    try:
+        deleted_ids = [
+            row[0]
+            for row in db.query(UserDeletedMeeting.meeting_id)
+            .filter(UserDeletedMeeting.user_id == user_id)
+            .all()
+        ]
+
+        query = (
+            db.query(Meeting)
+            .join(Participant, Participant.meeting_id == Meeting.id)
+            .filter(Participant.user_id == user_id, Meeting.user_id != user_id)
+        )
+        if deleted_ids:
+            query = query.filter(Meeting.id.notin_(deleted_ids))
+
+        joined_meetings = (
+            query.order_by(Meeting.created_at.desc())
+            .limit(50)
+            .all()
+        )
+
+        frontend_base = os.getenv("FRONTEND_URL", "https://localhost:5173").rstrip("/")
+
+        result = []
+        for m in joined_meetings:
+            host_user = db.query(User).filter(User.id == m.user_id).first()
+            host_name = host_user.name if host_user else "Meeting Host"
+
+            join_url = f"{frontend_base}/meeting/{m.room_code}"
+            if m.passcode:
+                join_url = f"{join_url}?passcode={m.passcode}"
+
+            result.append({
+                "id": m.id,
+                "title": m.title,
+                "description": m.description,
+                "room_code": m.room_code,
+                "passcode": m.passcode,
+                "meeting_type": m.meeting_type,
+                "external_link": m.external_link,
+                "status": m.status,
+                "host_name": host_name,
                 "join_url": join_url,
                 "created_at": m.created_at.isoformat() if m.created_at else None,
             })
@@ -941,64 +1105,61 @@ def search_meetings():
     search_term = f"%{query}%"
 
     try:
-        # 1. Search in Meeting title & description
-        matching_meetings = (
-            db.query(Meeting)
-            .filter(
-                Meeting.user_id == user_id,
-                or_(
-                    Meeting.title.ilike(search_term),
-                    Meeting.room_code.ilike(search_term),
-                    Meeting.description.ilike(search_term)
-                )
-            )
+        deleted_ids = [
+            row[0]
+            for row in db.query(UserDeletedMeeting.meeting_id)
+            .filter(UserDeletedMeeting.user_id == user_id)
             .all()
+        ]
+
+        # 1. Search in Meeting title & description
+        query_m = db.query(Meeting).filter(
+            Meeting.user_id == user_id,
+            or_(
+                Meeting.title.ilike(search_term),
+                Meeting.room_code.ilike(search_term),
+                Meeting.description.ilike(search_term)
+            )
         )
+        if deleted_ids:
+            query_m = query_m.filter(Meeting.id.notin_(deleted_ids))
+        matching_meetings = query_m.all()
 
         # 2. Search in Transcripts of user's meetings
-        matching_transcripts = (
-            db.query(Transcript, Meeting)
-            .join(Meeting, Transcript.meeting_id == Meeting.id)
-            .filter(
-                Meeting.user_id == user_id,
-                or_(
-                    Transcript.text.ilike(search_term),
-                    Transcript.speaker_name.ilike(search_term)
-                )
+        query_t = db.query(Transcript, Meeting).join(Meeting, Transcript.meeting_id == Meeting.id).filter(
+            Meeting.user_id == user_id,
+            or_(
+                Transcript.text.ilike(search_term),
+                Transcript.speaker_name.ilike(search_term)
             )
-            .limit(20)
-            .all()
         )
+        if deleted_ids:
+            query_t = query_t.filter(Meeting.id.notin_(deleted_ids))
+        matching_transcripts = query_t.limit(20).all()
 
         # 3. Search in Summaries
-        matching_summaries = (
-            db.query(MeetingSummary, Meeting)
-            .join(Meeting, MeetingSummary.meeting_id == Meeting.id)
-            .filter(
-                Meeting.user_id == user_id,
-                or_(
-                    MeetingSummary.summary.ilike(search_term),
-                    MeetingSummary.key_points.ilike(search_term)
-                )
+        query_s = db.query(MeetingSummary, Meeting).join(Meeting, MeetingSummary.meeting_id == Meeting.id).filter(
+            Meeting.user_id == user_id,
+            or_(
+                MeetingSummary.summary.ilike(search_term),
+                MeetingSummary.key_points.ilike(search_term)
             )
-            .limit(10)
-            .all()
         )
+        if deleted_ids:
+            query_s = query_s.filter(Meeting.id.notin_(deleted_ids))
+        matching_summaries = query_s.limit(10).all()
 
         # 4. Search in Action Items
-        matching_actions = (
-            db.query(ActionItem, Meeting)
-            .join(Meeting, ActionItem.meeting_id == Meeting.id)
-            .filter(
-                Meeting.user_id == user_id,
-                or_(
-                    ActionItem.task.ilike(search_term),
-                    ActionItem.assignee.ilike(search_term)
-                )
+        query_a = db.query(ActionItem, Meeting).join(Meeting, ActionItem.meeting_id == Meeting.id).filter(
+            Meeting.user_id == user_id,
+            or_(
+                ActionItem.task.ilike(search_term),
+                ActionItem.assignee.ilike(search_term)
             )
-            .limit(10)
-            .all()
         )
+        if deleted_ids:
+            query_a = query_a.filter(Meeting.id.notin_(deleted_ids))
+        matching_actions = query_a.limit(10).all()
 
         results = []
         seen_meetings = set()
@@ -1086,121 +1247,156 @@ def end_meeting(room_code):
 
         db.commit()
 
-        # Auto-generate intelligence when meeting ends (if transcripts exist)
-        transcript_count = db.query(Transcript).filter(Transcript.meeting_id == meeting.id).count()
-        if transcript_count > 0:
-            try:
-                transcripts_for_intel = (
-                    db.query(Transcript)
-                    .filter(Transcript.meeting_id == meeting.id)
-                    .order_by(Transcript.created_at.asc())
-                    .all()
-                )
-                segments = [
-                    {
-                        "id": t.id,
-                        "speaker_name": t.speaker_name or "Participant",
-                        "text": t.text,
-                        "start_time": t.start_time,
-                        "end_time": t.end_time,
-                    }
-                    for t in transcripts_for_intel
-                ]
-                intel = generate_meeting_intelligence(segments, meeting.title)
-                key_points_str = "\n".join(intel.get("key_discussion_points", []))
-                existing_summary = db.query(MeetingSummary).filter(
-                    MeetingSummary.meeting_id == meeting.id
-                ).first()
-                if existing_summary:
-                    existing_summary.summary = intel.get("summary", "")
-                    existing_summary.key_points = key_points_str
-                else:
-                    db.add(MeetingSummary(
-                        meeting_id=meeting.id,
-                        summary=intel.get("summary", ""),
-                        key_points=key_points_str,
-                    ))
-                db.query(ActionItem).filter(ActionItem.meeting_id == meeting.id).delete()
-                for item in intel.get("action_items", []):
-                    db.add(ActionItem(
-                        meeting_id=meeting.id,
-                        task=item.get("task", ""),
-                        assignee=item.get("assignee"),
-                        deadline=item.get("deadline"),
-                        status="pending",
-                    ))
-                db.query(Decision).filter(Decision.meeting_id == meeting.id).delete()
-                for dec in intel.get("decisions", []):
-                    db.add(Decision(
-                        meeting_id=meeting.id,
-                        decision=dec,
-                        made_at=datetime.utcnow(),
-                    ))
-                db.commit()
-                print(f"[END MEETING] Auto-generated intelligence for {clean_code}")
+        # Auto-generate intelligence and dispatch summary + PDF emails to host & participants
+        try:
+            transcripts_for_intel = (
+                db.query(Transcript)
+                .filter(Transcript.meeting_id == meeting.id)
+                .order_by(Transcript.created_at.asc())
+                .all()
+            )
+            segments = [
+                {
+                    "id": t.id,
+                    "speaker_name": t.speaker_name or "Participant",
+                    "text": t.text,
+                    "start_time": t.start_time,
+                    "end_time": t.end_time,
+                }
+                for t in transcripts_for_intel
+            ]
 
-                # Automatically email summary & PDF to all joined participants
+            if segments:
+                intel = generate_meeting_intelligence(segments, meeting.title)
+            else:
+                intel = {
+                    "summary": f"The meeting '{meeting.title}' concluded successfully. No live spoken audio transcripts were recorded during this session.",
+                    "key_discussion_points": [
+                        "Session held via AI Meeting Intelligence.",
+                        f"Meeting room: {meeting.room_code}",
+                        f"Duration: {meeting.duration or 0} seconds."
+                    ],
+                    "decisions": [],
+                    "action_items": []
+                }
+
+            key_points_str = "\n".join(intel.get("key_discussion_points", []))
+            existing_summary = db.query(MeetingSummary).filter(
+                MeetingSummary.meeting_id == meeting.id
+            ).first()
+            if existing_summary:
+                existing_summary.summary = intel.get("summary", "")
+                existing_summary.key_points = key_points_str
+            else:
+                db.add(MeetingSummary(
+                    meeting_id=meeting.id,
+                    summary=intel.get("summary", ""),
+                    key_points=key_points_str,
+                ))
+
+            db.query(ActionItem).filter(ActionItem.meeting_id == meeting.id).delete()
+            for item in intel.get("action_items", []):
+                db.add(ActionItem(
+                    meeting_id=meeting.id,
+                    task=item.get("task", ""),
+                    assignee=item.get("assignee"),
+                    deadline=item.get("deadline"),
+                    status="pending",
+                ))
+
+            db.query(Decision).filter(Decision.meeting_id == meeting.id).delete()
+            for dec in intel.get("decisions", []):
+                db.add(Decision(
+                    meeting_id=meeting.id,
+                    decision=dec,
+                    made_at=datetime.utcnow(),
+                ))
+
+            db.commit()
+            print(f"[END MEETING] Auto-generated intelligence for {clean_code} (segments: {len(segments)})")
+
+            # Automatically email summary & PDF to host and all participants
+            try:
+                participant_records = db.query(Participant).filter(Participant.meeting_id == meeting.id).all()
+                recipients = set()
+                
+                # Add host email
+                if meeting.user and meeting.user.email:
+                    recipients.add(meeting.user.email)
+                elif meeting.user_id:
+                    h = db.query(User).filter(User.id == meeting.user_id).first()
+                    if h and h.email:
+                        recipients.add(h.email)
+                
+                # Add all joined users' emails
+                for p in participant_records:
+                    if p.user and p.user.email:
+                        recipients.add(p.user.email)
+                    elif p.user_id:
+                        u = db.query(User).filter(User.id == p.user_id).first()
+                        if u and u.email:
+                            recipients.add(u.email)
+
+                # Also check active socket participants memory in case any left just before end
                 try:
-                    participant_records = db.query(Participant).filter(Participant.meeting_id == meeting.id).all()
-                    recipients = set()
-                    
-                    # Add host email
-                    if meeting.user and meeting.user.email:
-                        recipients.add(meeting.user.email)
-                    
-                    # Add all joined users' emails
-                    for p in participant_records:
-                        if p.user and p.user.email:
-                            recipients.add(p.user.email)
-                        elif p.user_id:
-                            u = db.query(User).filter(User.id == p.user_id).first()
+                    from backend.app.main import room_participants
+                    room_live = room_participants.get(clean_code, {})
+                    for p_info in room_live.values():
+                        uid = p_info.get("user_id")
+                        if uid:
+                            u = db.query(User).filter(User.id == uid).first()
                             if u and u.email:
                                 recipients.add(u.email)
+                except Exception as mem_err:
+                    print(f"[END MEETING] Note: Could not inspect room_participants: {mem_err}")
 
-                    if recipients:
-                        print(f"[END MEETING] Auto-sending summary to joined participants: {recipients}")
-                        
-                        host_name = meeting.user.name if meeting.user else "Host"
-                        date_str = meeting.created_at.strftime("%B %d, %Y") if meeting.created_at else "N/A"
-                        participant_names = list({p.display_name for p in participant_records})
-                        
-                        kp = intel.get("key_discussion_points", [])
-                        dec_list = intel.get("decisions", [])
-                        actions = [
-                            {"task": a.get("task", ""), "assignee": a.get("assignee"), "deadline": a.get("deadline")}
-                            for a in intel.get("action_items", [])
-                        ]
-                        
-                        trans_list = [
-                            {
-                                "speaker_name": t.speaker_name or "Participant",
-                                "text": t.text,
-                                "timestamp_str": format_timestamp(t.start_time),
-                            }
-                            for t in transcripts_for_intel
-                        ]
-                        
-                        pdf_bytes = None
+                if recipients:
+                    print(f"[END MEETING] Auto-sending summary to participants: {recipients}")
+                    
+                    host_name = meeting.user.name if meeting.user else "Host"
+                    date_str = meeting.created_at.strftime("%B %d, %Y") if meeting.created_at else "N/A"
+                    participant_names = list({p.display_name for p in participant_records if p.display_name})
+                    if not participant_names and meeting.user:
+                        participant_names = [meeting.user.name]
+                    
+                    kp = intel.get("key_discussion_points", [])
+                    dec_list = intel.get("decisions", [])
+                    actions = [
+                        {"task": a.get("task", ""), "assignee": a.get("assignee"), "deadline": a.get("deadline")}
+                        for a in intel.get("action_items", [])
+                    ]
+                    
+                    trans_list = [
+                        {
+                            "speaker_name": t.speaker_name or "Participant",
+                            "text": t.text,
+                            "timestamp_str": format_timestamp(t.start_time),
+                        }
+                        for t in transcripts_for_intel
+                    ]
+                    
+                    pdf_bytes = None
+                    try:
+                        pdf_bytes = generate_meeting_pdf(
+                            title=meeting.title,
+                            room_code=meeting.room_code,
+                            host_name=host_name,
+                            date_str=date_str,
+                            duration_seconds=meeting.duration,
+                            participants=participant_names,
+                            summary=intel.get("summary", ""),
+                            key_points=kp,
+                            decisions=dec_list,
+                            action_items=actions,
+                            transcripts=trans_list,
+                        )
+                    except Exception as pe:
+                        print(f"[END MEETING] PDF gen for auto-email failed: {pe}")
+
+                    pdf_fn = f"Meeting_{meeting.room_code}_Summary.pdf" if pdf_bytes else None
+
+                    for recipient in recipients:
                         try:
-                            pdf_bytes = generate_meeting_pdf(
-                                title=meeting.title,
-                                room_code=meeting.room_code,
-                                host_name=host_name,
-                                date_str=date_str,
-                                duration_seconds=meeting.duration,
-                                participants=participant_names,
-                                summary=intel.get("summary", ""),
-                                key_points=kp,
-                                decisions=dec_list,
-                                action_items=actions,
-                                transcripts=trans_list,
-                            )
-                        except Exception as pe:
-                            print(f"[END MEETING] PDF gen for auto-email failed: {pe}")
-
-                        pdf_fn = f"Meeting_{meeting.room_code}_Summary.pdf" if pdf_bytes else None
-
-                        for recipient in recipients:
                             send_meeting_summary_email(
                                 to_email=recipient,
                                 recipient_name=recipient,
@@ -1213,11 +1409,16 @@ def end_meeting(room_code):
                                 pdf_bytes=pdf_bytes,
                                 pdf_filename=pdf_fn,
                             )
-                        print(f"[END MEETING] Successfully dispatched summaries to {len(recipients)} recipient(s).")
-                except Exception as email_err:
-                    print(f"[END MEETING] Auto-email dispatch error (non-fatal): {email_err}")
-            except Exception as intel_err:
-                print(f"[END MEETING] Intelligence generation error (non-fatal): {intel_err}")
+                        except Exception as send_err:
+                            print(f"[END MEETING] Failed to send email to {recipient}: {send_err}")
+
+                    print(f"[END MEETING] Successfully processed email dispatch for {len(recipients)} recipient(s).")
+                else:
+                    print(f"[END MEETING] Warning: No recipient emails found for meeting {clean_code}")
+            except Exception as email_err:
+                print(f"[END MEETING] Auto-email dispatch error (non-fatal): {email_err}")
+        except Exception as intel_err:
+            print(f"[END MEETING] Intelligence generation error (non-fatal): {intel_err}")
 
         return {
             "message": "Meeting ended successfully",

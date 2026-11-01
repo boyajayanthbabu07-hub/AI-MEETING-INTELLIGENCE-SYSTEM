@@ -31,11 +31,13 @@ export default function Navbar() {
   return (
     <header className="top-navbar">
       <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-        <Link to="/dashboard" style={{ display: "flex", alignItems: "center", gap: "10px", textDecoration: "none" }}>
-          <div className="brand-icon" style={{ width: "32px", height: "32px" }}>
-            <Video size={18} />
-          </div>
-          <span style={{ fontSize: "16px", fontWeight: "800", color: "#ffffff", letterSpacing: "-0.5px" }}>
+        <Link to="/dashboard" style={{ display: "flex", alignItems: "center", gap: "12px", textDecoration: "none" }}>
+          <img
+            src="/logo.png"
+            alt="AI Meeting Intelligence Logo"
+            style={{ width: "42px", height: "42px", objectFit: "contain", borderRadius: "8px" }}
+          />
+          <span style={{ fontSize: "17px", fontWeight: "800", color: "#ffffff", letterSpacing: "-0.5px" }}>
             AI Meeting Intel
           </span>
         </Link>

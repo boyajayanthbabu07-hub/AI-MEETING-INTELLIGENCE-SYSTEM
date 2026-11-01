@@ -16,7 +16,7 @@ import api from "../api";
 import { useToast } from "../context/ToastContext";
 import LoadingSpinner from "./LoadingSpinner";
 
-export default function MeetingIntelligenceModal({ isOpen, onClose, meeting }) {
+export default function MeetingIntelligenceModal({ isOpen = true, onClose, meeting }) {
   const toast = useToast();
   const [activeTab, setActiveTab] = useState("intelligence"); // 'intelligence' | 'transcript'
   const [loading, setLoading] = useState(false);

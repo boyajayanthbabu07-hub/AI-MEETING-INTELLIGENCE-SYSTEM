@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Link, useNavigate, useLocation } from "react-router-dom";
 import { Video, Mail, Lock, Eye, EyeOff, ArrowRight, LogIn } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
@@ -18,6 +18,12 @@ export default function Login() {
   const [error, setError] = useState("");
 
   const from = location.state?.from?.pathname || "/dashboard";
+
+  useEffect(() => {
+    if (location.search.includes("expired=1")) {
+      setError("Your session has expired. Please sign in again to continue.");
+    }
+  }, [location.search]);
 
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -53,18 +59,29 @@ export default function Login() {
   };
 
   return (
-    <div className="auth-wrapper">
-      <div className="auth-card">
-        <div className="brand-header">
-          <div className="brand-logo">
-            <div className="brand-icon">
-              <Video size={22} />
-            </div>
-            <span className="brand-title">AI Meeting Intel</span>
-          </div>
-          <h1 className="auth-title">Welcome back</h1>
-          <p className="auth-subtitle">Sign in to your account to continue</p>
+    <div className="auth-split-container">
+      {/* Left Half: Brand & App Logo */}
+      <div className="auth-brand-side">
+        <div className="auth-brand-content">
+          <img
+            src="/logo.png"
+            alt="AI Meeting Intelligence Logo"
+            className="auth-hero-logo"
+          />
+          <h2 className="auth-brand-heading">AI Meeting Intelligence</h2>
+          <p className="auth-brand-subtext">
+            Enterprise video conferencing with real-time speech transcription, automated meeting intelligence, and actionable summaries.
+          </p>
         </div>
+      </div>
+
+      {/* Right Half: Login Form */}
+      <div className="auth-form-side">
+        <div className="auth-card">
+          <div className="brand-header">
+            <h1 className="auth-title">Welcome back</h1>
+            <p className="auth-subtitle">Sign in to your account to continue</p>
+          </div>
 
         {error && (
           <div style={{ background: "rgba(244, 63, 94, 0.15)", border: "1px solid rgba(244, 63, 94, 0.3)", borderRadius: "var(--radius-md)", padding: "10px 14px", color: "var(--accent-rose)", fontSize: "13px", marginBottom: "18px" }}>
@@ -140,6 +157,7 @@ export default function Login() {
           <Link to="/register" style={{ fontWeight: "700" }}>
             Create Account
           </Link>
+        </div>
         </div>
       </div>
     </div>

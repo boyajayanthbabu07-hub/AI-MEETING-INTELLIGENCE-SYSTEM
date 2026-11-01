@@ -9,6 +9,8 @@ import VerifyEmail from "./pages/VerifyEmail";
 import ForgotPassword from "./pages/ForgotPassword";
 import ResetPassword from "./pages/ResetPassword";
 import Dashboard from "./pages/Dashboard";
+import HostedMeetings from "./pages/HostedMeetings";
+import JoinedMeetings from "./pages/JoinedMeetings";
 import Profile from "./pages/Profile";
 import Settings from "./pages/Settings";
 import MeetingRoom from "./pages/MeetingRoom";
@@ -37,6 +39,23 @@ export default function App() {
                 </ProtectedRoute>
               }
             />
+            <Route
+              path="/hosted-meetings"
+              element={
+                <ProtectedRoute>
+                  <HostedMeetings />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/joined-meetings"
+              element={
+                <ProtectedRoute>
+                  <JoinedMeetings />
+                </ProtectedRoute>
+              }
+            />
+            <Route path="/meetings" element={<Navigate to="/hosted-meetings" replace />} />
             <Route
               path="/profile"
               element={

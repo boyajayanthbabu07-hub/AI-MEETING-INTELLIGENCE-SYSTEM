@@ -435,7 +435,12 @@ def extract_intelligence_locally(
                     "deadline": deadline
                 })
 
-        if len(sentence) > 25 and not sentence.endswith("?"):
+        # Only consider meaningful substantive sentences (> 35 chars) as key discussion points
+        # Filter out casual chat, greetings, fragments or one-liners
+        casual_greetings = ("hi", "hello", "hey", "how are you", "yeah", "yes", "okay", "ok", "fine", "bye", "see you")
+        is_greeting = any(lowered.startswith(g) or lowered == g for g in casual_greetings)
+
+        if len(sentence) > 35 and not sentence.endswith("?") and not is_greeting:
             point = (
                 f"[{format_timestamp(item['time'])}] "
                 f"{speaker}: {sentence}"

@@ -4,7 +4,7 @@ import api from "../api";
 import { useToast } from "../context/ToastContext";
 import LoadingSpinner from "./LoadingSpinner";
 
-export default function InviteModal({ isOpen, onClose, meeting }) {
+export default function InviteModal({ isOpen = true, onClose, meeting }) {
   const toast = useToast();
 
   const [emailsInput, setEmailsInput] = useState("");
