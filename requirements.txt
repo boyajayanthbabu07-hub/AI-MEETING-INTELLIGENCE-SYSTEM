@@ -13,9 +13,9 @@ SQLAlchemy==2.1.1
 PyMySQL==1.2.3
 
 # AI & Speech Recognition
-openai-whisper==20250625
-torch==2.8.0+cpu
-numpy==2.4.6
+openai-whisper
+torch
+numpy
 
 # Utilities
 tqdm==4.70.1
