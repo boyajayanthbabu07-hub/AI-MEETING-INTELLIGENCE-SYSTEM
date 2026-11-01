@@ -115,7 +115,13 @@ function MeetingRoom() {
   const getSocketUrl = () => {
     if (import.meta.env.VITE_SOCKET_URL) return import.meta.env.VITE_SOCKET_URL;
     if (import.meta.env.VITE_API_URL) return import.meta.env.VITE_API_URL;
-    return typeof window !== "undefined" ? window.location.origin : "http://localhost:5000";
+    if (typeof window !== "undefined") {
+      if (window.location.hostname.includes("vercel.app")) {
+        return "https://ai-meeting-intelligence-system-hevd.onrender.com";
+      }
+      return window.location.origin;
+    }
+    return "http://localhost:5000";
   };
 
   // --------------------------------------------------
