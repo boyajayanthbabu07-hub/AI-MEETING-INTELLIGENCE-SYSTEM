@@ -4,7 +4,9 @@ import axios from "axios";
 const getBaseURL = () => {
   // If explicitly configured in .env, respect that:
   if (import.meta.env.VITE_API_URL) return import.meta.env.VITE_API_URL;
-  // If accessed over standard domain (like Cloudflare tunnel or public URL) or localhost with Vite proxy:
+  if (typeof window !== "undefined" && window.location.hostname.includes("vercel.app")) {
+    return "https://ai-meeting-intelligence-system-hevd.onrender.com";
+  }
   return "";
 };
 
